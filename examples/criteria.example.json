@@ -1,0 +1,11 @@
+{
+  "genres": ["rap", "hip-hop"],
+  "location": "France",
+  "countries": ["France"],
+  "capacity_min": 3000,
+  "capacity_max": 20000,
+  "date_from": "2026-09-01",
+  "date_to": "2026-12-31",
+  "max_results": 15,
+  "extra": "Zéniths et Arenas, hors petits clubs. Tournées et dates uniques."
+}
