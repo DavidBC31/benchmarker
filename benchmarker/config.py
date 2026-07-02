@@ -38,6 +38,31 @@ PREFERRED_SOURCES_FR = [
     "weezevent.com",
 ]
 
+# --- Rendu navigateur (Playwright) -----------------------------------------
+# Stratégie d'extraction des prix : "web_fetch" (LLM), "playwright" (navigateur),
+# ou "auto" (web_fetch puis fallback navigateur si la grille est insuffisante).
+FETCH_STRATEGY = os.environ.get("BENCHMARKER_FETCH_STRATEGY", "web_fetch")
+
+RENDER_TIMEOUT_MS = int(os.environ.get("BENCHMARKER_RENDER_TIMEOUT_MS", "30000"))
+RENDER_IDLE_MS = int(os.environ.get("BENCHMARKER_RENDER_IDLE_MS", "5000"))
+RENDER_TEXT_CAP = int(os.environ.get("BENCHMARKER_RENDER_TEXT_CAP", "20000"))
+RENDER_USER_AGENT = os.environ.get(
+    "BENCHMARKER_RENDER_UA",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+)
+
+# Sélecteurs courants de boutons « accepter les cookies » (billetteries FR).
+COOKIE_ACCEPT_SELECTORS = [
+    "#didomi-notice-agree-button",       # Didomi (très répandu en France)
+    "button#onetrust-accept-btn-handler",  # OneTrust
+    "button[aria-label*='accepter' i]",
+    "button:has-text('Tout accepter')",
+    "button:has-text('Accepter')",
+    "button:has-text('J\\'accepte')",
+    "#accept",
+]
+
 # Devise de référence pour la normalisation.
 BASE_CURRENCY = "EUR"
 

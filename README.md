@@ -11,7 +11,7 @@ Approche **hybride** en deux temps (la découverte web seule ne suffit pas pour 
 | Étape | Module | Rôle |
 |-------|--------|------|
 | 1. Découverte | `discovery.py` | Recherche web (LLM) → liste de dates candidates |
-| 2. Extraction | `extraction.py` | Récupération ciblée de chaque page billetterie (web fetch) → grille tarifaire structurée |
+| 2. Extraction | `extraction.py` / `browser.py` | Récupération de chaque page billetterie → grille tarifaire structurée |
 | 3. Analyse | `analysis.py` | Stats pandas : min / max / moyenne / médiane, par catégorie et par style |
 | 4. Reco | `recommend.py` | Fourchette tarifaire par comparables (style + jauge proches) |
 
@@ -58,6 +58,23 @@ Sorties générées :
 - `out/benchmark_synthese.md` — synthèse statistique.
 
 Option `--no-prices` : découverte seule (rapide), sans extraction tarifaire.
+
+#### Stratégie de récupération des prix
+
+Certaines billetteries chargent leur grille tarifaire en JavaScript, invisible pour un simple fetch. On choisit la stratégie via `--fetch-strategy` :
+
+| Valeur | Comportement |
+|--------|--------------|
+| `web_fetch` (défaut) | Le LLM récupère la page (outil serveur `web_fetch`). Rapide, mais rate les grilles en JS. |
+| `playwright` | Rend la page dans Chromium (JS exécuté, bandeaux cookies gérés) puis structure. Plus fiable, plus lent. |
+| `auto` | `web_fetch` d'abord ; bascule sur Playwright si la grille récupérée est jugée insuffisante. |
+
+```bash
+python -m benchmarker.cli search --criteria examples/criteria.example.json \
+  --fetch-strategy auto -o out/benchmark.csv
+```
+
+Chromium doit être disponible. En local : `python -m playwright install chromium`. Dans un environnement où il est pré-installé (`PLAYWRIGHT_BROWSERS_PATH`), rien à faire — le module le détecte. Un `PageRenderer` unique est réutilisé sur toutes les dates d'un run.
 
 ### Préconiser des tarifs
 

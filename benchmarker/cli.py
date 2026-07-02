@@ -30,7 +30,10 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     criteria = _load_criteria(args)
     concerts = build_benchmark(
-        criteria, with_prices=not args.no_prices, progress=_log
+        criteria,
+        with_prices=not args.no_prices,
+        strategy=args.fetch_strategy,
+        progress=_log,
     )
 
     df = analysis.concerts_to_frame(concerts)
@@ -124,6 +127,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-results", type=int, default=15, dest="max_results")
     s.add_argument("--extra", help="Contraintes libres additionnelles.")
     s.add_argument("--no-prices", action="store_true", help="Découverte seule, sans extraction des prix.")
+    s.add_argument(
+        "--fetch-strategy",
+        choices=["web_fetch", "playwright", "auto"],
+        default=None,
+        dest="fetch_strategy",
+        help="Récupération des prix : web_fetch (LLM), playwright (navigateur), auto (défaut config).",
+    )
     s.add_argument("-o", "--output", default="out/benchmark.csv", help="Fichier de sortie (.csv/.xlsx).")
     s.set_defaults(func=cmd_search)
 
