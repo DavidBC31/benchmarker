@@ -12,7 +12,12 @@ import anthropic
 
 from . import config
 from .llm import parse_structured, run_server_tool_loop
-from .models import Concert, ConcertList, SearchCriteria
+from .models import (
+    Concert,
+    DiscoveredList,
+    SearchCriteria,
+    discovered_to_concert,
+)
 
 _DISCOVERY_SYSTEM = """Tu es un analyste billetterie spécialisé dans le live musical.
 Ta mission : trouver des dates de concerts réelles correspondant à des critères.
@@ -60,9 +65,10 @@ def discover(client: anthropic.Anthropic, criteria: SearchCriteria) -> List[Conc
 
     parsed = parse_structured(
         client,
-        schema=ConcertList,
+        schema=DiscoveredList,
         instruction=_DISCOVERY_INSTRUCTION,
         material=findings,
-        effort="medium",
     )
-    return parsed.concerts if parsed else []
+    if not parsed:
+        return []
+    return [discovered_to_concert(d) for d in parsed.concerts]

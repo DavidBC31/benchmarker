@@ -96,9 +96,75 @@ class Concert(BaseModel):
 
 
 class ConcertList(BaseModel):
-    """Enveloppe pour la sortie structurée de la phase de découverte."""
+    """Enveloppe pour un ensemble de `Concert` (usage interne / round-trip)."""
 
     concerts: List[Concert] = Field(default_factory=list)
+
+
+class DiscoveredConcert(BaseModel):
+    """Schéma minimal renvoyé par la découverte (sortie structurée légère).
+
+    Volontairement plat et sans prix : la sortie structurée du LLM a une limite
+    de complexité, donc on garde ce schéma le plus simple possible, puis on le
+    convertit en `Concert` complet côté code.
+    """
+
+    artist: str = Field(description="Nom de l'artiste ou du groupe principal.")
+    date: Optional[str] = Field(default=None, description="Date ISO YYYY-MM-DD.")
+    venue: Optional[str] = Field(default=None, description="Nom de la salle / du lieu.")
+    city: Optional[str] = Field(default=None, description="Ville.")
+    country: Optional[str] = Field(default=None, description="Pays.")
+    genre: Optional[str] = Field(default=None, description="Style musical dominant.")
+    event_type: Optional[str] = Field(
+        default=None, description="Nature : date unique, tournée, festival…"
+    )
+    capacity: Optional[int] = Field(default=None, description="Jauge si connue.")
+    source_url: Optional[str] = Field(
+        default=None, description="URL de la page billetterie."
+    )
+
+
+class DiscoveredList(BaseModel):
+    """Enveloppe pour la sortie structurée de la découverte."""
+
+    concerts: List[DiscoveredConcert] = Field(default_factory=list)
+
+
+_EVENT_TYPE_KEYWORDS = {
+    EventType.FESTIVAL: ["festival"],
+    EventType.TOURNEE: ["tourn", "tour"],
+    EventType.UNIQUE: ["unique", "exceptionnel"],
+    EventType.RESIDENCE: ["residence", "résidence"],
+}
+
+
+def coerce_event_type(value: Optional[str]) -> EventType:
+    """Mappe une chaîne libre vers un `EventType` (best effort)."""
+    if not value:
+        return EventType.AUTRE
+    v = value.strip().lower()
+    for et in EventType:
+        if v == et.value:
+            return et
+    for et, kws in _EVENT_TYPE_KEYWORDS.items():
+        if any(k in v for k in kws):
+            return et
+    return EventType.AUTRE
+
+
+def discovered_to_concert(d: DiscoveredConcert) -> Concert:
+    """Convertit un `DiscoveredConcert` (léger) en `Concert` complet."""
+    return Concert(
+        artist=d.artist,
+        date=d.date,
+        venue=d.venue,
+        city=d.city,
+        country=d.country,
+        capacity=d.capacity,
+        genre=d.genre,
+        event_type=coerce_event_type(d.event_type),
+        source_url=d.source_url,
+    )
 
 
 class PriceExtraction(BaseModel):

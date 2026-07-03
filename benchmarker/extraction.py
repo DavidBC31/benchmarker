@@ -150,7 +150,6 @@ def _structure(client: anthropic.Anthropic, page_text: str) -> Optional[PriceExt
         schema=PriceExtraction,
         instruction=_STRUCTURE_INSTRUCTION,
         material=page_text,
-        effort="medium",
     )
 
 

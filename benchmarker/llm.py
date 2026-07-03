@@ -87,20 +87,19 @@ def parse_structured(
     schema: Type[T],
     instruction: str,
     material: str,
-    effort: str = "medium",
     max_tokens: int = 16000,
 ) -> Optional[T]:
     """Structure du texte libre en un modèle Pydantic via `messages.parse`.
 
     `material` est le texte brut (résultats de recherche / contenu de page) à
-    structurer ; `instruction` explique ce qu'on attend.
+    structurer ; `instruction` explique ce qu'on attend. On garde l'appel
+    minimal : la sortie structurée impose déjà le format, pas besoin de
+    thinking ni d'effort élevé (et ça évite toute interaction avec le schéma).
     """
     prompt = f"{instruction}\n\n--- MATÉRIAU À STRUCTURER ---\n{material}"
     response = client.messages.parse(
         model=config.MODEL,
         max_tokens=max_tokens,
-        thinking={"type": "adaptive"},
-        output_config={"effort": effort},
         messages=[{"role": "user", "content": prompt}],
         output_format=schema,
     )
