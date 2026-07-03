@@ -46,9 +46,34 @@ def build_benchmark(
         for i, concert in enumerate(concerts, start=1):
             label = f"{concert.artist} — {concert.venue or '?'}"
             log(f"[{i}/{len(concerts)}] Extraction prix ({strategy}) : {label}")
-            extract_prices(client, concert, strategy=strategy, renderer=renderer)
+            try:
+                extract_prices(client, concert, strategy=strategy, renderer=renderer)
+            except Exception as exc:  # noqa: BLE001
+                if _is_fatal(exc):
+                    # Crédits épuisés / auth invalide : inutile de continuer, mais
+                    # on conserve tout ce qui a déjà été collecté.
+                    log(f"Arrêt : erreur fatale ({exc}). "
+                        f"{i - 1}/{len(concerts)} date(s) traitée(s), résultats conservés.")
+                    break
+                # Erreur ponctuelle sur cette date : on la note et on continue.
+                log(f"  ! date ignorée ({exc})")
+                concert.notes = _append_note(concert.notes, f"extraction échouée : {exc}")
 
     return concerts
+
+
+def _is_fatal(exc: Exception) -> bool:
+    """Distingue les erreurs qui condamnent tout le run (crédits, auth)."""
+    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return True
+    msg = str(exc).lower()
+    return any(k in msg for k in ("credit balance", "billing", "quota", "insufficient"))
+
+
+def _append_note(existing, addition: str) -> str:
+    if existing:
+        return f"{existing} | {addition}"
+    return addition
 
 
 def _renderer_for(strategy: str, log: Callable[[str], None]):
