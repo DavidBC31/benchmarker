@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchAgent macOS pour l'interface web du benchmarker.
+  1) Remplace __PROJECT_DIR__ par le chemin absolu du projet
+     (ex. /Users/serveurit/Projets/benchmarker).
+  2) Copie ce fichier dans ~/Library/LaunchAgents/com.benchmarker.web.plist
+  3) launchctl load -w ~/Library/LaunchAgents/com.benchmarker.web.plist
+  C'est un LaunchAgent (pas un Daemon) : il tourne comme ton utilisateur, donc
+  il a accès au cache Playwright (~/Library/Caches/ms-playwright).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.benchmarker.web</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__PROJECT_DIR__/deploy/run.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_DIR__</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__PROJECT_DIR__/out/web.log</string>
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_DIR__/out/web.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Benchmarker Billetterie</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#0f1115; --panel:#1a1d24; --line:#2a2e37;
+            --txt:#e8e8ea; --muted:#9aa0aa; --accent:#6366f1; --ok:#34d399; --warn:#fbbf24; --bad:#f87171; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: var(--bg);
+           color: var(--txt); line-height: 1.5; }
+    header { display:flex; justify-content:space-between; align-items:center;
+             padding: 1rem 1.5rem; border-bottom: 1px solid var(--line); }
+    header h1 { font-size: 1.1rem; margin: 0; }
+    header a { color: var(--muted); font-size: .85rem; text-decoration: none; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; display: grid; gap: 1.25rem; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 1.25rem; }
+    .panel h2 { margin: 0 0 1rem; font-size: 1rem; }
+    label { display:block; font-size: .8rem; color: var(--muted); margin-bottom: .25rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: .9rem; }
+    input, select, textarea { width:100%; padding:.55rem .65rem; border-radius:9px; border:1px solid var(--line);
+                              background: var(--bg); color: var(--txt); font-size:.92rem; }
+    button { background: var(--accent); color:#fff; border:none; padding:.65rem 1.2rem; border-radius:9px;
+             font-weight:600; cursor:pointer; font-size:.95rem; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .row { display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; margin-top: 1rem; }
+    .muted { color: var(--muted); font-size: .85rem; }
+    .hidden { display:none; }
+    #log { background:#000; border-radius:9px; padding:.8rem; font-family: ui-monospace, monospace;
+           font-size:.8rem; max-height: 260px; overflow:auto; white-space:pre-wrap; color:#cbd5e1; }
+    .badge { padding:.15rem .55rem; border-radius:999px; font-size:.75rem; font-weight:600; }
+    .b-running{background:#3730a3;color:#c7d2fe} .b-done{background:#065f46;color:#a7f3d0}
+    .b-error{background:#7f1d1d;color:#fecaca}
+    table { width:100%; border-collapse: collapse; font-size:.85rem; }
+    th, td { text-align:left; padding:.5rem .6rem; border-bottom:1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight:600; }
+    .tiles { display:grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap:.75rem; }
+    .tile { background: var(--bg); border:1px solid var(--line); border-radius:10px; padding:.7rem .8rem; }
+    .tile .v { font-size:1.3rem; font-weight:700; } .tile .k { color:var(--muted); font-size:.75rem; }
+    .conf { font-size:.72rem; padding:.1rem .45rem; border-radius:6px; }
+    .c-grille_complete{background:#065f46;color:#a7f3d0} .c-grille_partielle{background:#78350f;color:#fde68a}
+    .c-prix_a_partir_de{background:#3730a3;color:#c7d2fe} .c-aucun_prix{background:#450a0a;color:#fecaca}
+    .dl a { color: var(--accent); margin-right: 1rem; font-size:.85rem; }
+    .warnkey { background:#78350f; color:#fde68a; padding:.6rem .8rem; border-radius:9px; font-size:.85rem; }
+    .tblwrap { overflow-x:auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎫 Benchmarker Billetterie</h1>
+    {% if auth_enabled %}<a href="/logout">Déconnexion</a>{% endif %}
+  </header>
+
+  <main>
+    {% if not has_key %}
+    <div class="warnkey">⚠️ Aucune clé API détectée côté serveur (ANTHROPIC_API_KEY). Définissez-la
+      dans l'environnement du service avant de lancer un benchmark.</div>
+    {% endif %}
+
+    <!-- Critères -->
+    <section class="panel">
+      <h2>1 · Critères de recherche</h2>
+      <div class="grid">
+        <div><label>Styles musicaux (séparés par des virgules)</label>
+          <input id="genres" placeholder="rap, hip-hop"></div>
+        <div><label>Zone géographique</label><input id="location" placeholder="France" value="France"></div>
+        <div><label>Jauge min</label><input id="capacity_min" type="number" placeholder="3000"></div>
+        <div><label>Jauge max</label><input id="capacity_max" type="number" placeholder="20000"></div>
+        <div><label>Date début</label><input id="date_from" type="date"></div>
+        <div><label>Date fin</label><input id="date_to" type="date"></div>
+        <div><label>Nombre de dates</label><input id="max_results" type="number" value="10"></div>
+        <div><label>Stratégie prix</label>
+          <select id="strategy">
+            <option value="auto">auto (recommandé)</option>
+            <option value="web_fetch">web_fetch (rapide)</option>
+            <option value="playwright">playwright (navigateur)</option>
+          </select></div>
+      </div>
+      <div style="margin-top:.9rem"><label>Contraintes additionnelles</label>
+        <textarea id="extra" rows="2" placeholder="Zéniths et Arenas, hors petits clubs…"></textarea></div>
+      <div class="row">
+        <button id="run">Lancer le benchmark</button>
+        <label style="display:flex;align-items:center;gap:.4rem;margin:0;color:var(--txt)">
+          <input type="checkbox" id="with_prices" checked style="width:auto"> extraire les prix</label>
+      </div>
+    </section>
+
+    <!-- Progression -->
+    <section class="panel hidden" id="progress-panel">
+      <h2>2 · Progression <span id="status-badge" class="badge b-running">en cours…</span></h2>
+      <div id="log"></div>
+    </section>
+
+    <!-- Résultats -->
+    <section class="panel hidden" id="results-panel">
+      <h2>3 · Résultats</h2>
+      <div class="dl" id="downloads"></div>
+      <div class="tiles" id="tiles" style="margin:1rem 0"></div>
+      <div id="cat-table"></div>
+      <h3 style="font-size:.9rem;margin:1.2rem 0 .5rem">Détail des dates</h3>
+      <div class="tblwrap"><table id="rows-table"></table></div>
+    </section>
+
+    <!-- Reco -->
+    <section class="panel hidden" id="reco-panel">
+      <h2>4 · Préconisation tarifaire</h2>
+      <div class="grid">
+        <div><label>Artiste (libellé)</label><input id="r_artist" placeholder="Nom artiste"></div>
+        <div><label>Style</label><input id="r_genre" placeholder="rap"></div>
+        <div><label>Jauge de la salle</label><input id="r_capacity" type="number" placeholder="7000"></div>
+      </div>
+      <div class="row"><button id="reco-btn">Préconiser des tarifs</button></div>
+      <div id="reco-out" style="margin-top:1rem"></div>
+    </section>
+  </main>
+
+<script>
+let currentJob = null, poll = null;
+const $ = (id) => document.getElementById(id);
+
+$("run").addEventListener("click", async () => {
+  const payload = {
+    genres: $("genres").value, location: $("location").value,
+    capacity_min: $("capacity_min").value, capacity_max: $("capacity_max").value,
+    date_from: $("date_from").value, date_to: $("date_to").value,
+    max_results: $("max_results").value, extra: $("extra").value,
+    strategy: $("strategy").value, with_prices: $("with_prices").checked,
+  };
+  $("run").disabled = true;
+  $("progress-panel").classList.remove("hidden");
+  $("results-panel").classList.add("hidden");
+  $("reco-panel").classList.add("hidden");
+  $("log").textContent = ""; setBadge("running", "en cours…");
+  const res = await fetch("/api/run", {method:"POST", headers:{"Content-Type":"application/json"},
+                                       body: JSON.stringify(payload)});
+  const j = await res.json();
+  currentJob = j.job_id;
+  poll = setInterval(checkStatus, 1500);
+});
+
+async function checkStatus() {
+  const res = await fetch(`/api/status/${currentJob}`);
+  const j = await res.json();
+  $("log").textContent = (j.log || []).join("\n");
+  $("log").scrollTop = $("log").scrollHeight;
+  if (j.status === "done" || j.status === "error") {
+    clearInterval(poll); $("run").disabled = false;
+    setBadge(j.status, j.status === "done" ? "terminé" : "erreur");
+    if (j.status === "done") loadResults();
+  }
+}
+function setBadge(cls, txt){ const b=$("status-badge"); b.className="badge b-"+cls; b.textContent=txt; }
+
+async function loadResults() {
+  const res = await fetch(`/api/result/${currentJob}`);
+  const j = await res.json();
+  renderResults(j.summary, j.rows);
+  $("results-panel").classList.remove("hidden");
+  $("reco-panel").classList.remove("hidden");
+  $("downloads").innerHTML =
+    `<a href="/download/${currentJob}.csv">⬇︎ CSV</a>` +
+    `<a href="/download/${currentJob}.json">⬇︎ JSON</a>` +
+    `<a href="/download/${currentJob}_synthese.md">⬇︎ Synthèse</a>`;
+}
+
+function renderResults(s, rows) {
+  const g = s.global || {};
+  const tiles = [
+    ["Dates", s.dates_trouvees], ["Tarifs", s.tarifs_collectes],
+    ["Min €", g.min ?? "–"], ["Moyenne €", g.mean ?? "–"],
+    ["Médiane €", g.median ?? "–"], ["Max €", g.max ?? "–"],
+  ];
+  $("tiles").innerHTML = tiles.map(([k,v]) =>
+    `<div class="tile"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
+
+  // Table par catégorie
+  const cats = s.par_categorie || {};
+  let ct = "";
+  if (Object.keys(cats).length) {
+    ct = `<h3 style="font-size:.9rem;margin:.5rem 0">Par catégorie (EUR)</h3>
+      <div class="tblwrap"><table><tr><th>Catégorie</th><th>N</th><th>Min</th><th>Moy.</th><th>Méd.</th><th>Max</th></tr>` +
+      Object.entries(cats).map(([c,v]) =>
+        `<tr><td>${c}</td><td>${v.count}</td><td>${v.min}</td><td>${v.mean}</td><td>${v.median}</td><td>${v.max}</td></tr>`
+      ).join("") + `</table></div>`;
+  }
+  $("cat-table").innerHTML = ct;
+
+  // Table des dates
+  let html = `<tr><th>Artiste</th><th>Date</th><th>Lieu</th><th>Ville</th><th>Jauge</th>
+              <th>Prix</th><th>Confiance</th></tr>`;
+  html += (rows||[]).map(r => `<tr>
+    <td>${esc(r.artist)}</td><td>${esc(r.date)||""}</td><td>${esc(r.venue)||""}</td>
+    <td>${esc(r.city)||""}</td><td>${r.capacity||""}</td>
+    <td>${esc(r.prices)||"<span class='muted'>—</span>"}</td>
+    <td><span class="conf c-${r.price_confidence}">${r.price_confidence}</span></td></tr>`).join("");
+  $("rows-table").innerHTML = html;
+}
+
+$("reco-btn").addEventListener("click", async () => {
+  const res = await fetch(`/api/recommend/${currentJob}`, {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({artist:$("r_artist").value, genre:$("r_genre").value, capacity:$("r_capacity").value})});
+  const j = await res.json();
+  const r = j.reco || {};
+  if (r.error) { $("reco-out").innerHTML = `<div class="muted">${r.error}</div>`; return; }
+  const per = r.reco_par_categorie || {};
+  let html = `<div class="muted">Filtres : ${(r.filtres_appliques||[]).join(", ")} · échantillon : ${r.taille_echantillon}</div>`;
+  html += `<div class="tblwrap"><table><tr><th>Catégorie</th><th>N</th><th>Fourchette (EUR)</th><th>Médiane</th></tr>` +
+    Object.entries(per).map(([c,v]) =>
+      `<tr><td>${c}</td><td>${v.n}</td><td>${v.fourchette_recommandee[0]} – ${v.fourchette_recommandee[1]}</td><td>${v.median}</td></tr>`
+    ).join("") + `</table></div>`;
+  $("reco-out").innerHTML = html;
+});
+
+function esc(s){ return (s==null)?"":String(s).replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+</script>
+</body>
+</html>

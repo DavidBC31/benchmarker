@@ -86,6 +86,22 @@ python -m benchmarker.cli recommend \
 
 Renvoie une fourchette (25e–75e percentile) et une médiane par catégorie, avec l'échantillon de comparables retenu.
 
+## Interface web
+
+Une interface web locale permet de piloter l'outil sans terminal : formulaire de critères, progression en direct, tableau des résultats (avec la colonne `price_confidence`), téléchargements et préconisation tarifaire.
+
+Lancement en local :
+
+```bash
+pip install -r requirements.txt
+export ANTHROPIC_API_KEY="ta-clé"
+export BENCHMARKER_AUTH_TOKEN="un-mot-de-passe"   # protège l'accès
+python -m benchmarker.web
+# -> http://127.0.0.1:8080
+```
+
+**Hébergement permanent sur Mac Studio + Cloudflare** (service launchd + tunnel + Cloudflare Access) : voir [`deploy/README.md`](deploy/README.md). La clé API reste côté serveur ; l'accès est protégé par mot de passe applicatif **et** Cloudflare Access.
+
 ## Configuration
 
 Réglable par variables d'environnement (voir `benchmarker/config.py`) :

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Benchmarker — Connexion</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: -apple-system, system-ui, sans-serif; display: grid;
+           place-items: center; min-height: 100vh; margin: 0; background: #0f1115; color: #e8e8ea; }
+    .card { background: #1a1d24; padding: 2rem; border-radius: 14px; width: min(340px, 90vw);
+            box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+    h1 { font-size: 1.15rem; margin: 0 0 1rem; }
+    input, button { width: 100%; box-sizing: border-box; padding: .7rem .8rem; border-radius: 9px;
+                    border: 1px solid #333; font-size: 1rem; margin-top: .5rem; }
+    input { background: #0f1115; color: #e8e8ea; }
+    button { background: #6366f1; color: #fff; border: none; cursor: pointer; font-weight: 600; margin-top: 1rem; }
+    .err { color: #f87171; font-size: .85rem; margin-top: .6rem; }
+  </style>
+</head>
+<body>
+  <form class="card" method="post">
+    <h1>Benchmarker Billetterie</h1>
+    <input type="password" name="password" placeholder="Mot de passe" autofocus required>
+    <button type="submit">Se connecter</button>
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  </form>
+</body>
+</html>

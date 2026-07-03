@@ -1,0 +1,18 @@
+# Config Cloudflare Tunnel — à placer dans ~/.cloudflared/config.yml
+# Remplace <TUNNEL_ID>, le chemin credentials et le hostname.
+#
+# Prérequis :
+#   brew install cloudflared
+#   cloudflared tunnel login
+#   cloudflared tunnel create benchmarker      # -> crée <TUNNEL_ID> + credentials json
+#   cloudflared tunnel route dns benchmarker benchmarker.tondomaine.fr
+
+tunnel: <TUNNEL_ID>
+credentials-file: /Users/serveurit/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  # Le tunnel relaie le trafic HTTPS public vers l'appli locale.
+  - hostname: benchmarker.tondomaine.fr
+    service: http://127.0.0.1:8080
+  # Règle de repli obligatoire.
+  - service: http_status:404

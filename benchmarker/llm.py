@@ -16,12 +16,15 @@ from . import config
 T = TypeVar("T", bound=BaseModel)
 
 
-def build_client() -> anthropic.Anthropic:
+def build_client(api_key: Optional[str] = None) -> anthropic.Anthropic:
     """Construit le client Anthropic.
 
-    Les identifiants sont résolus depuis l'environnement (ANTHROPIC_API_KEY,
+    Si `api_key` est fourni (ex. saisi dans l'interface web), il est utilisé ;
+    sinon les identifiants sont résolus depuis l'environnement (ANTHROPIC_API_KEY,
     ANTHROPIC_AUTH_TOKEN, ou un profil `ant auth login`).
     """
+    if api_key:
+        return anthropic.Anthropic(api_key=api_key)
     return anthropic.Anthropic()
 
 

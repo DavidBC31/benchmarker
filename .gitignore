@@ -16,3 +16,6 @@ out/
 .DS_Store
 .idea/
 .vscode/
+
+# Secrets d'hébergement
+benchmarker.env
