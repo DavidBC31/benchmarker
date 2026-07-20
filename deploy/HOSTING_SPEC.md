@@ -113,8 +113,11 @@ chmod 600 benchmarker.env
 | `BENCHMARKER_FETCH_STRATEGY` | Stratégie prix par défaut | `auto` |
 
 Variables optionnelles (défauts raisonnables si absentes) :
-`BENCHMARKER_OUT_DIR` (défaut `out`), `BENCHMARKER_MODEL` (défaut
-`claude-opus-4-8`), `BENCHMARKER_CHROMIUM_PATH` (auto-détecté).
+`BENCHMARKER_OUT_DIR` (défaut `out`), `BENCHMARKER_CHROMIUM_PATH`
+(auto-détecté), et les modèles par rôle — `BENCHMARKER_DISCOVERY_MODEL` /
+`BENCHMARKER_EXTRACTION_MODEL` (défaut `claude-sonnet-5`),
+`BENCHMARKER_STRUCTURE_MODEL` (défaut `claude-haiku-4-5`). Ces défauts sont
+optimisés pour le coût ; ne pas les remplacer par Opus sans raison.
 
 > **Contrainte de sécurité forte** : la clé API ne doit exister **que** dans
 > `benchmarker.env` (chmod 600), jamais en dur dans le code, un plist, un

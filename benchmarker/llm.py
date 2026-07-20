@@ -43,8 +43,9 @@ def run_server_tool_loop(
     system: str,
     user: str | list,
     tools: list,
-    effort: str = "high",
-    max_tokens: int = 16000,
+    model: Optional[str] = None,
+    effort: str = "medium",
+    max_tokens: int = 8000,
 ) -> str:
     """Exécute une conversation utilisant des outils serveur (recherche/fetch).
 
@@ -52,24 +53,12 @@ def run_server_tool_loop(
     avec un garde-fou sur le nombre de continuations. Renvoie le texte agrégé
     de la réponse finale.
     """
+    model = model or config.MODEL
     messages: list = [{"role": "user", "content": user}]
 
-    response = client.messages.create(
-        model=config.MODEL,
-        max_tokens=max_tokens,
-        system=system,
-        thinking={"type": "adaptive"},
-        output_config={"effort": effort},
-        tools=tools,
-        messages=messages,
-    )
-
-    continuations = 0
-    while response.stop_reason == "pause_turn" and continuations < config.MAX_CONTINUATIONS:
-        continuations += 1
-        messages.append({"role": "assistant", "content": response.content})
-        response = client.messages.create(
-            model=config.MODEL,
+    def _call() -> "anthropic.types.Message":
+        return client.messages.create(
+            model=model,
             max_tokens=max_tokens,
             system=system,
             thinking={"type": "adaptive"},
@@ -77,6 +66,14 @@ def run_server_tool_loop(
             tools=tools,
             messages=messages,
         )
+
+    response = _call()
+
+    continuations = 0
+    while response.stop_reason == "pause_turn" and continuations < config.MAX_CONTINUATIONS:
+        continuations += 1
+        messages.append({"role": "assistant", "content": response.content})
+        response = _call()
 
     if response.stop_reason == "refusal":
         raise RuntimeError("Le modèle a refusé la requête (stop_reason=refusal).")
@@ -90,18 +87,20 @@ def parse_structured(
     schema: Type[T],
     instruction: str,
     material: str,
-    max_tokens: int = 16000,
+    model: Optional[str] = None,
+    max_tokens: int = 8000,
 ) -> Optional[T]:
     """Structure du texte libre en un modèle Pydantic via `messages.parse`.
 
     `material` est le texte brut (résultats de recherche / contenu de page) à
-    structurer ; `instruction` explique ce qu'on attend. On garde l'appel
-    minimal : la sortie structurée impose déjà le format, pas besoin de
-    thinking ni d'effort élevé (et ça évite toute interaction avec le schéma).
+    structurer ; `instruction` explique ce qu'on attend. Tâche mécanique : on
+    utilise par défaut le modèle le moins cher (STRUCTURE_MODEL), sans thinking
+    ni effort (la sortie structurée impose déjà le format).
     """
+    model = model or config.STRUCTURE_MODEL
     prompt = f"{instruction}\n\n--- MATÉRIAU À STRUCTURER ---\n{material}"
     response = client.messages.parse(
-        model=config.MODEL,
+        model=model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
         output_format=schema,

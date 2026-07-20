@@ -57,6 +57,7 @@ def discover(client: anthropic.Anthropic, criteria: SearchCriteria) -> List[Conc
         system=_DISCOVERY_SYSTEM,
         user=user,
         tools=[web_search],
+        model=config.DISCOVERY_MODEL,
         effort=config.DISCOVERY_EFFORT,
     )
 

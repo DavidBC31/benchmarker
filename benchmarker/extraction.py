@@ -59,27 +59,29 @@ def extract_prices(
     result: Optional[PriceExtraction] = None
     used: Optional[str] = None
 
-    # 1) web_fetch (si demandé)
-    if strategy in ("web_fetch", "auto"):
-        page_text, err = _gather_via_web_fetch(client, concert)
-        if page_text:
-            result = _structure(client, page_text)
-            used = "web_fetch"
-        elif strategy == "web_fetch":
-            concert.notes = _append_note(concert.notes, f"web_fetch : {err}")
-
-    # 2) Playwright (stratégie dédiée, ou fallback auto si grille insuffisante)
-    need_playwright = strategy == "playwright" or (
-        strategy == "auto" and not _is_sufficient(result)
-    )
-    if need_playwright:
+    # 1) Playwright d'abord (rendu local GRATUIT) pour "playwright" et "auto".
+    #    Seule la structuration (Haiku) coûte, et une seule fois.
+    if strategy in ("playwright", "auto"):
         rendered, err = _gather_via_playwright(concert.source_url, renderer)
         if rendered:
-            candidate = _structure(client, rendered)
-            if _is_better(candidate, result):
-                result, used = candidate, "playwright"
-        elif not result:
+            result = _structure(client, rendered)
+            used = "playwright"
+        elif strategy == "playwright":
             concert.notes = _append_note(concert.notes, f"playwright : {err}")
+
+    # 2) web_fetch (LLM, coûteux) : stratégie dédiée, ou fallback "auto"
+    #    UNIQUEMENT si le rendu gratuit n'a pas donné de grille suffisante.
+    need_web_fetch = strategy == "web_fetch" or (
+        strategy == "auto" and not _is_sufficient(result)
+    )
+    if need_web_fetch:
+        page_text, err = _gather_via_web_fetch(client, concert)
+        if page_text:
+            candidate = _structure(client, page_text)
+            if _is_better(candidate, result):
+                result, used = candidate, "web_fetch"
+        elif not result:
+            concert.notes = _append_note(concert.notes, f"web_fetch : {err}")
 
     # 3) Application du résultat
     if result is None:
@@ -109,12 +111,14 @@ def _gather_via_web_fetch(
     )
     web_fetch = dict(config.WEB_FETCH_TOOL)
     web_fetch["max_uses"] = config.MAX_FETCH_USES
+    web_fetch["max_content_tokens"] = config.FETCH_MAX_CONTENT_TOKENS
     try:
         text = run_server_tool_loop(
             client,
             system=_FETCH_SYSTEM,
             user=user,
             tools=[web_fetch],
+            model=config.EXTRACTION_MODEL,
             effort=config.EXTRACTION_EFFORT,
         )
         return (text or None), (None if text else "page vide ou inaccessible")
