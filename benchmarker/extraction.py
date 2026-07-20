@@ -40,15 +40,16 @@ def extract_prices(
     client: anthropic.Anthropic,
     concert: Concert,
     *,
-    strategy: str = None,
+    settings: "config.RunSettings | None" = None,
     renderer=None,
 ) -> Concert:
     """Enrichit un `Concert` avec sa grille tarifaire (in place et retourné).
 
-    `strategy` : "web_fetch" | "playwright" | "auto" (défaut : config).
+    `settings` : réglages du run (modèles, stratégie, budgets). Défaut : profil courant.
     `renderer` : instance `PageRenderer` réutilisable (optionnel, pour Playwright).
     """
-    strategy = strategy or config.FETCH_STRATEGY
+    settings = settings or config.resolve_settings()
+    strategy = settings.fetch_strategy
     concert.priced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     if not concert.source_url:
@@ -60,11 +61,11 @@ def extract_prices(
     used: Optional[str] = None
 
     # 1) Playwright d'abord (rendu local GRATUIT) pour "playwright" et "auto".
-    #    Seule la structuration (Haiku) coûte, et une seule fois.
+    #    Seule la structuration coûte, et une seule fois.
     if strategy in ("playwright", "auto"):
         rendered, err = _gather_via_playwright(concert.source_url, renderer)
         if rendered:
-            result = _structure(client, rendered)
+            result = _structure(client, rendered, settings.structure_model)
             used = "playwright"
         elif strategy == "playwright":
             concert.notes = _append_note(concert.notes, f"playwright : {err}")
@@ -75,9 +76,9 @@ def extract_prices(
         strategy == "auto" and not _is_sufficient(result)
     )
     if need_web_fetch:
-        page_text, err = _gather_via_web_fetch(client, concert)
+        page_text, err = _gather_via_web_fetch(client, concert, settings)
         if page_text:
-            candidate = _structure(client, page_text)
+            candidate = _structure(client, page_text, settings.structure_model)
             if _is_better(candidate, result):
                 result, used = candidate, "web_fetch"
         elif not result:
@@ -99,7 +100,7 @@ def extract_prices(
 
 # --- collecte de la page ----------------------------------------------------
 def _gather_via_web_fetch(
-    client: anthropic.Anthropic, concert: Concert
+    client: anthropic.Anthropic, concert: Concert, settings: "config.RunSettings"
 ) -> tuple[Optional[str], Optional[str]]:
     """Récupère la page via l'outil serveur web_fetch. Renvoie (texte, erreur)."""
     user = (
@@ -110,16 +111,16 @@ def _gather_via_web_fetch(
         "Récupère la page et donne-moi la grille tarifaire complète par catégorie."
     )
     web_fetch = dict(config.WEB_FETCH_TOOL)
-    web_fetch["max_uses"] = config.MAX_FETCH_USES
-    web_fetch["max_content_tokens"] = config.FETCH_MAX_CONTENT_TOKENS
+    web_fetch["max_uses"] = settings.max_fetch_uses
+    web_fetch["max_content_tokens"] = settings.fetch_max_content_tokens
     try:
         text = run_server_tool_loop(
             client,
             system=_FETCH_SYSTEM,
             user=user,
             tools=[web_fetch],
-            model=config.EXTRACTION_MODEL,
-            effort=config.EXTRACTION_EFFORT,
+            model=settings.extraction_model,
+            effort=settings.extraction_effort,
         )
         return (text or None), (None if text else "page vide ou inaccessible")
     except Exception as exc:  # réseau / refus / autre
@@ -147,13 +148,16 @@ def _gather_via_playwright(
 
 
 # --- structuration ----------------------------------------------------------
-def _structure(client: anthropic.Anthropic, page_text: str) -> Optional[PriceExtraction]:
+def _structure(
+    client: anthropic.Anthropic, page_text: str, model: str | None = None
+) -> Optional[PriceExtraction]:
     """Structure le texte de page en grille tarifaire typée."""
     return parse_structured(
         client,
         schema=PriceExtraction,
         instruction=_STRUCTURE_INSTRUCTION,
         material=page_text,
+        model=model,
     )
 
 

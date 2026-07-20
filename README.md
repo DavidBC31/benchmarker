@@ -102,6 +102,24 @@ python -m benchmarker.web
 
 **Hébergement permanent sur Mac Studio + Cloudflare** (service launchd + tunnel + Cloudflare Access) : voir [`deploy/README.md`](deploy/README.md). La clé API reste côté serveur ; l'accès est protégé par mot de passe applicatif **et** Cloudflare Access.
 
+## Profils qualité / coût
+
+Un sélecteur (interface web et `--profile` en CLI) permet d'arbitrer coût vs couverture par run :
+
+| Profil | Découverte | Structuration prix | Idéal pour |
+|--------|-----------|--------------------|-----------|
+| **eco** (défaut) | Sonnet 5, effort medium, 5 recherches | Haiku | Coût minimal |
+| **equilibre** | Sonnet 5, effort high, 8 recherches | Sonnet 5 | Meilleure couverture des dates |
+| **max** | Opus 4.8, effort high, 8 recherches | Sonnet 5 | Qualité maximale |
+
+Dans les trois cas, les prix passent d'abord par le **rendu gratuit** (Playwright) ; seule la découverte et la structuration montent en gamme. Méthode conseillée : lancer en `eco`, et si trop de `partielle`/`aucun_prix` ou trop peu de dates, relancer la même recherche en `equilibre` pour comparer le gain vs le surcoût.
+
+```bash
+python -m benchmarker.cli search --criteria examples/criteria.example.json --profile equilibre -o out/benchmark.csv
+```
+
+Profil par défaut surchargeable via `BENCHMARKER_PROFILE`.
+
 ## Coûts et optimisation
 
 La consommation de crédits API est maîtrisée par trois choix, du plus impactant au moindre :

@@ -102,6 +102,7 @@ def create_app() -> Flask:
             "index.html",
             has_key=has_key,
             default_strategy=config.FETCH_STRATEGY,
+            default_profile=config.DEFAULT_PROFILE,
             auth_enabled=bool(auth_token),
         )
 
@@ -111,7 +112,8 @@ def create_app() -> Flask:
     def api_run():
         data = request.get_json(force=True) or {}
         criteria = _criteria_from_payload(data)
-        strategy = data.get("strategy") or config.FETCH_STRATEGY
+        profile = data.get("profile") or None
+        strategy = data.get("strategy") or None
         with_prices = bool(data.get("with_prices", True))
 
         job = Job(id=uuid.uuid4().hex[:12])
@@ -120,7 +122,7 @@ def create_app() -> Flask:
 
         thread = threading.Thread(
             target=_run_job,
-            args=(job, criteria, strategy, with_prices),
+            args=(job, criteria, profile, strategy, with_prices),
             daemon=True,
         )
         thread.start()
@@ -173,7 +175,13 @@ def create_app() -> Flask:
 
 
 # --- Exécution d'un job -----------------------------------------------------
-def _run_job(job: Job, criteria: SearchCriteria, strategy: str, with_prices: bool) -> None:
+def _run_job(
+    job: Job,
+    criteria: SearchCriteria,
+    profile: Optional[str],
+    strategy: Optional[str],
+    with_prices: bool,
+) -> None:
     def log(msg: str) -> None:
         job.log.append(msg)
 
@@ -183,6 +191,7 @@ def _run_job(job: Job, criteria: SearchCriteria, strategy: str, with_prices: boo
             criteria,
             client=client,
             with_prices=with_prices,
+            profile=profile,
             strategy=strategy,
             progress=log,
         )

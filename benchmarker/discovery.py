@@ -38,8 +38,13 @@ et l'URL de la page billetterie. NE mets PAS de prix à cette étape (prices vid
 Ignore les doublons et les dates hors critères."""
 
 
-def discover(client: anthropic.Anthropic, criteria: SearchCriteria) -> List[Concert]:
+def discover(
+    client: anthropic.Anthropic,
+    criteria: SearchCriteria,
+    settings: config.RunSettings | None = None,
+) -> List[Concert]:
     """Retourne une liste de `Concert` candidats (sans grille tarifaire)."""
+    settings = settings or config.resolve_settings()
     sources_hint = ", ".join(config.PREFERRED_SOURCES_FR)
     user = (
         "Trouve des dates de concerts correspondant aux critères suivants :\n\n"
@@ -50,15 +55,15 @@ def discover(client: anthropic.Anthropic, criteria: SearchCriteria) -> List[Conc
     )
 
     web_search = dict(config.WEB_SEARCH_TOOL)
-    web_search["max_uses"] = config.MAX_SEARCH_USES
+    web_search["max_uses"] = settings.max_search_uses
 
     findings = run_server_tool_loop(
         client,
         system=_DISCOVERY_SYSTEM,
         user=user,
         tools=[web_search],
-        model=config.DISCOVERY_MODEL,
-        effort=config.DISCOVERY_EFFORT,
+        model=settings.discovery_model,
+        effort=settings.discovery_effort,
     )
 
     if not findings:
@@ -69,6 +74,7 @@ def discover(client: anthropic.Anthropic, criteria: SearchCriteria) -> List[Conc
         schema=DiscoveredList,
         instruction=_DISCOVERY_INSTRUCTION,
         material=findings,
+        model=settings.structure_model,
     )
     if not parsed:
         return []

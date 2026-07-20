@@ -70,11 +70,18 @@
         <div><label>Date début</label><input id="date_from" type="date"></div>
         <div><label>Date fin</label><input id="date_to" type="date"></div>
         <div><label>Nombre de dates</label><input id="max_results" type="number" value="10"></div>
+        <div><label>Qualité / coût</label>
+          <select id="profile">
+            <option value="eco" {% if default_profile=='eco' %}selected{% endif %}>Économe (le moins cher)</option>
+            <option value="equilibre" {% if default_profile=='equilibre' %}selected{% endif %}>Équilibré (meilleure couverture)</option>
+            <option value="max" {% if default_profile=='max' %}selected{% endif %}>Max qualité (Opus)</option>
+          </select></div>
         <div><label>Stratégie prix</label>
           <select id="strategy">
-            <option value="auto">auto (recommandé)</option>
-            <option value="web_fetch">web_fetch (rapide)</option>
-            <option value="playwright">playwright (navigateur)</option>
+            <option value="">(profil par défaut)</option>
+            <option value="auto">auto (rendu gratuit + fallback)</option>
+            <option value="playwright">playwright (gratuit seul)</option>
+            <option value="web_fetch">web_fetch (LLM, coûteux)</option>
           </select></div>
       </div>
       <div style="margin-top:.9rem"><label>Contraintes additionnelles</label>
@@ -125,7 +132,8 @@ $("run").addEventListener("click", async () => {
     capacity_min: $("capacity_min").value, capacity_max: $("capacity_max").value,
     date_from: $("date_from").value, date_to: $("date_to").value,
     max_results: $("max_results").value, extra: $("extra").value,
-    strategy: $("strategy").value, with_prices: $("with_prices").checked,
+    profile: $("profile").value, strategy: $("strategy").value,
+    with_prices: $("with_prices").checked,
   };
   $("run").disabled = true;
   $("progress-panel").classList.remove("hidden");

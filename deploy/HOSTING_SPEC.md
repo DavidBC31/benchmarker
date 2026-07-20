@@ -111,6 +111,7 @@ chmod 600 benchmarker.env
 | `BENCHMARKER_HOST` | Interface d'écoute | **`127.0.0.1`** (ne jamais mettre `0.0.0.0`) |
 | `BENCHMARKER_PORT` | Port local | `8080` |
 | `BENCHMARKER_FETCH_STRATEGY` | Stratégie prix par défaut | `auto` |
+| `BENCHMARKER_PROFILE` | Profil qualité/coût par défaut | `eco` (choix par run dans l'UI) |
 
 Variables optionnelles (défauts raisonnables si absentes) :
 `BENCHMARKER_OUT_DIR` (défaut `out`), `BENCHMARKER_CHROMIUM_PATH`

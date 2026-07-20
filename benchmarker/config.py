@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 # --- Modèles LLM (par rôle, pour maîtriser le coût) -------------------------
 # Chaque étape utilise le modèle le moins cher qui fait bien le travail :
@@ -79,6 +80,74 @@ COOKIE_ACCEPT_SELECTORS = [
     "button:has-text('J\\'accepte')",
     "#accept",
 ]
+
+# --- Profils qualité / coût -------------------------------------------------
+# Un profil regroupe modèles + effort + budget d'outils pour un run donné.
+# "eco" = valeurs par défaut ci-dessus (le moins cher). Les profils supérieurs
+# améliorent surtout la COUVERTURE des dates (découverte) et la structuration.
+DEFAULT_PROFILE = os.environ.get("BENCHMARKER_PROFILE", "eco")
+PROFILES = ("eco", "equilibre", "max")
+
+
+@dataclass
+class RunSettings:
+    """Réglages effectifs d'un run (résolus depuis un profil)."""
+
+    discovery_model: str
+    extraction_model: str
+    structure_model: str
+    discovery_effort: str
+    extraction_effort: str
+    max_search_uses: int
+    max_fetch_uses: int
+    fetch_max_content_tokens: int
+    fetch_strategy: str
+
+
+def _base_settings() -> RunSettings:
+    """Profil 'eco' : reprend les défauts (surchargés par les variables d'env)."""
+    return RunSettings(
+        discovery_model=DISCOVERY_MODEL,
+        extraction_model=EXTRACTION_MODEL,
+        structure_model=STRUCTURE_MODEL,
+        discovery_effort=DISCOVERY_EFFORT,
+        extraction_effort=EXTRACTION_EFFORT,
+        max_search_uses=MAX_SEARCH_USES,
+        max_fetch_uses=MAX_FETCH_USES,
+        fetch_max_content_tokens=FETCH_MAX_CONTENT_TOKENS,
+        fetch_strategy=FETCH_STRATEGY,
+    )
+
+
+def resolve_settings(profile: str | None = None, strategy: str | None = None) -> RunSettings:
+    """Construit les réglages effectifs pour un profil (et une stratégie optionnelle).
+
+    - eco       : le moins cher (rendu gratuit + Haiku, Sonnet, effort bas).
+    - equilibre : meilleure couverture des dates (effort high, 8 recherches) et
+                  structuration en Sonnet ; prix toujours via rendu gratuit.
+    - max       : Opus en découverte/fetch, Sonnet en structuration, effort élevé.
+    """
+    profile = (profile or DEFAULT_PROFILE or "eco").lower()
+    if profile not in PROFILES:
+        profile = "eco"
+    s = _base_settings()
+
+    if profile == "equilibre":
+        s.discovery_effort = "high"
+        s.max_search_uses = 8
+        s.structure_model = "claude-sonnet-5"
+    elif profile == "max":
+        s.discovery_model = "claude-opus-4-8"
+        s.extraction_model = "claude-opus-4-8"
+        s.structure_model = "claude-sonnet-5"
+        s.discovery_effort = "high"
+        s.extraction_effort = "medium"
+        s.max_search_uses = 8
+
+    if strategy:
+        s.fetch_strategy = strategy
+    return s
+
 
 # Devise de référence pour la normalisation.
 BASE_CURRENCY = "EUR"

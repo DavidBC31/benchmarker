@@ -19,35 +19,38 @@ def build_benchmark(
     *,
     client: Optional[anthropic.Anthropic] = None,
     with_prices: bool = True,
+    profile: Optional[str] = None,
     strategy: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
 ) -> List[Concert]:
     """Construit le benchmark complet pour un jeu de critères.
 
     1. Découverte des dates (recherche web).
-    2. Extraction des prix par date, si `with_prices`, selon `strategy`
-       ("web_fetch" | "playwright" | "auto").
+    2. Extraction des prix par date, si `with_prices`.
+
+    `profile` : "eco" | "equilibre" | "max" (compromis coût/qualité).
+    `strategy` : force la stratégie d'extraction (sinon celle du profil).
 
     Pour les stratégies utilisant le navigateur, un unique `PageRenderer` est
     ouvert puis réutilisé sur toutes les dates (bien plus efficace).
     """
     client = client or build_client()
-    strategy = strategy or config.FETCH_STRATEGY
+    settings = config.resolve_settings(profile, strategy)
     log = progress or (lambda _msg: None)
 
-    log("Découverte des dates…")
-    concerts = discover(client, criteria)
+    log(f"Découverte des dates… (profil : {profile or config.DEFAULT_PROFILE})")
+    concerts = discover(client, criteria, settings)
     log(f"{len(concerts)} date(s) trouvée(s).")
 
     if not with_prices:
         return concerts
 
-    with _renderer_for(strategy, log) as renderer:
+    with _renderer_for(settings.fetch_strategy, log) as renderer:
         for i, concert in enumerate(concerts, start=1):
             label = f"{concert.artist} — {concert.venue or '?'}"
-            log(f"[{i}/{len(concerts)}] Extraction prix ({strategy}) : {label}")
+            log(f"[{i}/{len(concerts)}] Extraction prix ({settings.fetch_strategy}) : {label}")
             try:
-                extract_prices(client, concert, strategy=strategy, renderer=renderer)
+                extract_prices(client, concert, settings=settings, renderer=renderer)
             except Exception as exc:  # noqa: BLE001
                 if _is_fatal(exc):
                     # Crédits épuisés / auth invalide : inutile de continuer, mais
