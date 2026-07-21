@@ -65,6 +65,42 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- selftest (sans LLM, sans crédits) --------------------------------------
+def cmd_selftest(args: argparse.Namespace) -> int:
+    """Test d'intégration de toute la chaîne non-LLM sur des données d'exemple."""
+    from .sample import sample_concerts
+
+    concerts = sample_concerts()
+    _log(f"{len(concerts)} dates d'exemple.")
+
+    df = analysis.concerts_to_frame(concerts)
+    summary = analysis.summarize(df)
+    reco = recommend.recommend(df, genre="rap", capacity=7000, artist="Artiste Test")
+
+    # Invariants de base (échoue avec code ≠ 0 si la chaîne est cassée).
+    assert summary["dates_trouvees"] == len(concerts), "compte de dates incohérent"
+    assert summary["global"]["count"] > 0, "aucun tarif agrégé"
+    assert summary["par_categorie"], "aucune stat par catégorie"
+    assert reco["reco_par_categorie"], "reco vide"
+
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out, index=False)
+    out.with_suffix(".json").write_text(
+        json.dumps([c.model_dump() for c in concerts], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    out.with_name(out.stem + "_synthese.md").write_text(
+        analysis.summary_to_markdown(summary), encoding="utf-8"
+    )
+    _log(f"Fichiers écrits : {out}, {out.with_suffix('.json')}, {out.with_name(out.stem + '_synthese.md')}")
+
+    print(analysis.summary_to_markdown(summary))
+    print("\n" + recommend.recommendation_to_markdown(reco))
+    print("\n✅ selftest OK — toute la chaîne non-LLM fonctionne (aucun crédit consommé).")
+    return 0
+
+
 # --- recommend --------------------------------------------------------------
 def cmd_recommend(args: argparse.Namespace) -> int:
     df = _load_benchmark_frame(args.benchmark)
@@ -143,6 +179,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     s.add_argument("-o", "--output", default="out/benchmark.csv", help="Fichier de sortie (.csv/.xlsx).")
     s.set_defaults(func=cmd_search)
+
+    # selftest
+    st = sub.add_parser("selftest", help="Test d'intégration sans LLM ni crédits (données d'exemple).")
+    st.add_argument("-o", "--output", default="out/selftest.csv", help="Fichier de sortie (.csv).")
+    st.set_defaults(func=cmd_selftest)
 
     # recommend
     r = sub.add_parser("recommend", help="Préconiser des tarifs depuis un benchmark.")

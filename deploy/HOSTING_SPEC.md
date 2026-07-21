@@ -301,6 +301,7 @@ Tous les endpoints (hors `/login`) exigent une session authentifiée.
 
 Le déploiement est validé si **toutes** ces assertions passent :
 
+0. **Smoke test sans crédits** : `source .venv/bin/activate && python -m benchmarker.cli selftest` → se termine par `✅ selftest OK` (valide toute la chaîne d'analyse/export sans appeler l'API ni consommer de crédits).
 1. `launchctl list | grep benchmarker` → service présent, dernier code de sortie `0`.
 2. `curl -sI http://127.0.0.1:8080/login` → `200 OK`.
 3. Après reboot du Mac, l'app et le tunnel redémarrent seuls (re-vérifier 1 & 2).

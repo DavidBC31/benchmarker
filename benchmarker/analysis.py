@@ -73,9 +73,8 @@ def _describe(series: pd.Series) -> dict:
 def summarize(df: pd.DataFrame) -> dict:
     """Statistiques globales, par catégorie et par style (prix EUR)."""
     priced = df[df["price_eur"].notna()]
-    n_dates = df["source_url"].nunique(dropna=True) or df.groupby(
-        ["artist", "date", "venue"], dropna=False
-    ).ngroups
+    # Nombre d'événements distincts (une date sans URL compte quand même).
+    n_dates = df.groupby(["artist", "date", "venue"], dropna=False).ngroups
 
     by_category = {
         str(cat): _describe(grp["price_eur"])
