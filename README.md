@@ -15,6 +15,13 @@ Approche **hybride** en deux temps (la découverte web seule ne suffit pas pour 
 | 3. Analyse | `analysis.py` | Stats pandas : min / max / moyenne / médiane, par catégorie et par style |
 | 4. Reco | `recommend.py` | Fourchette tarifaire par comparables (style + jauge proches) |
 
+> 💡 **URLs génériques.** La découverte remonte parfois l'URL d'un portail
+> d'événements (page d'accueil) plutôt que la fiche de vente précise. Dans ce
+> cas, l'extraction détecte l'URL générique et tente **une recherche ciblée
+> unique** (peu coûteuse) pour retrouver la fiche directe avant d'abandonner —
+> voir la note `URL affinée : …` ou `Pas de fiche événement directe trouvée`
+> dans les résultats.
+
 > ⚠️ **Le point dur, ce sont les prix par catégorie.** Les grilles (Carré Or / Fosse / Cat. 1-2-3) sont souvent chargées en JavaScript, varient dans le temps (dynamic pricing, frais de loc) et ne sont pas toujours complètes. Chaque prix est donc **horodaté** et assorti d'un **niveau de confiance** (`grille_complete`, `grille_partielle`, `prix_a_partir_de`, `aucun_prix`). La couverture ne sera pas de 100 % — une validation humaine sur les cas incomplets reste recommandée.
 
 ## Installation

@@ -26,15 +26,26 @@ Méthode :
 - Utilise la recherche web pour identifier des dates concrètes (artiste, date, salle, ville).
 - Privilégie les sources billetterie fiables et les sites officiels de salles/festivals.
 - Reste factuel : n'invente jamais une date, un lieu ou un prix. Si tu n'es pas sûr, ne l'inclus pas.
-- Pour chaque date, note l'URL de la page billetterie de référence si tu la trouves.
 - Identifie la nature de la date (date unique, tournée, festival) et le style musical.
+
+Règle STRICTE sur les URLs (le point le plus important) :
+- L'URL doit pointer DIRECTEMENT sur la fiche de vente de CET événement précis
+  (ex : contient un identifiant d'événement, un slug artiste+date, un chemin du
+  type /evenement/…, /event/…, /place-spectacle/…, /billets/…).
+- N'indique JAMAIS l'URL d'une page d'accueil, d'un portail agrégateur
+  d'événements (ex. jds.fr, infoconcert.com), d'une page de recherche ou
+  d'une liste d'événements. ARRIVER LE PLUS PRÉCIS POSSIBLE.
+- Si tu ne trouves pas d'URL directe vers la fiche de CET événement, laisse
+  l'URL vide plutôt que de mettre une page d'accueil ou un portail générique.
+  Une URL vide est préférable à une URL générique.
 
 Tu produiras une liste de dates candidates ; l'extraction des prix se fait dans une étape ultérieure."""
 
 _DISCOVERY_INSTRUCTION = """À partir des résultats de recherche ci-dessous, produis la liste
 structurée des dates de concerts trouvées. Pour chaque date, renseigne au maximum :
 artiste, date (ISO), salle, ville, pays, jauge si connue, style, nature de l'événement,
-et l'URL de la page billetterie. NE mets PAS de prix à cette étape (prices vide).
+et l'URL de la page billetterie DIRECTE de cet événement (jamais une page d'accueil
+ou un portail générique — laisse le champ vide si tu n'as trouvé qu'une page générique).
 Ignore les doublons et les dates hors critères."""
 
 

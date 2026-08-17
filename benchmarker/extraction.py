@@ -12,8 +12,10 @@ fragile : on qualifie systématiquement ce qu'on trouve (niveau de confiance).
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urlsplit
 
 import anthropic
 
@@ -35,6 +37,15 @@ structurée : liste des catégories avec prix et devise, un niveau de confiance
 (grille_complete / grille_partielle / prix_a_partir_de / aucun_prix), et une note
 éventuelle (early bird, dynamic pricing, complet, etc.). N'invente aucun prix."""
 
+_REFINE_URL_SYSTEM = """Tu cherches l'URL DIRECTE de la fiche de vente de billets pour un
+concert précis (pas la page d'accueil du site, pas un portail d'événements, pas une page
+de recherche ou de liste).
+
+Réponds STRICTEMENT par :
+- l'URL trouvée (et rien d'autre), si tu es raisonnablement sûr qu'elle correspond
+  précisément à cet événement ;
+- ou le mot AUCUNE si tu ne trouves pas de fiche dédiée à cet événement précis."""
+
 
 def extract_prices(
     client: anthropic.Anthropic,
@@ -52,10 +63,20 @@ def extract_prices(
     strategy = settings.fetch_strategy
     concert.priced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    if not concert.source_url:
-        concert.price_confidence = PriceConfidence.NONE
-        concert.notes = _append_note(concert.notes, "Pas d'URL billetterie disponible.")
-        return concert
+    # URL absente ou visiblement générique (page d'accueil/portail) : on tente
+    # une recherche ciblée pour retrouver la fiche directe avant d'abandonner.
+    if _looks_like_generic_url(concert.source_url):
+        refined = _refine_source_url(client, concert, settings)
+        if refined:
+            concert.notes = _append_note(concert.notes, f"URL affinée : {refined}")
+            concert.source_url = refined
+        else:
+            concert.price_confidence = PriceConfidence.NONE
+            concert.notes = _append_note(
+                concert.notes,
+                "Pas de fiche événement directe trouvée (URL générique ou absente).",
+            )
+            return concert
 
     result: Optional[PriceExtraction] = None
     used: Optional[str] = None
@@ -67,7 +88,9 @@ def extract_prices(
         if rendered:
             result = _structure(client, rendered, settings.structure_model)
             used = "playwright"
-        elif strategy == "playwright":
+        else:
+            # Notée même en mode "auto" (avant : silencieuse) pour pouvoir
+            # diagnostiquer un souci de rendu sans devoir forcer la stratégie.
             concert.notes = _append_note(concert.notes, f"playwright : {err}")
 
     # 2) web_fetch (LLM, coûteux) : stratégie dédiée, ou fallback "auto"
@@ -96,6 +119,56 @@ def extract_prices(
     if result.notes:
         concert.notes = _append_note(concert.notes, result.notes)
     return concert
+
+
+# --- qualité de l'URL --------------------------------------------------------
+def _looks_like_generic_url(url: Optional[str]) -> bool:
+    """Détecte une URL de type page d'accueil/portail plutôt qu'une fiche événement.
+
+    Heuristique volontairement simple mais indépendante du domaine : une page
+    d'accueil n'a pas de chemin significatif (vide ou juste `/`). Une fiche
+    événement a presque toujours un chemin (slug, identifiant, etc.). Ça évite
+    de dépendre d'une liste de domaines à maintenir.
+    """
+    if not url:
+        return True
+    return urlsplit(url).path in ("", "/")
+
+
+def _refine_source_url(
+    client: anthropic.Anthropic, concert: Concert, settings: "config.RunSettings"
+) -> Optional[str]:
+    """Recherche ciblée d'une URL directe de billetterie (un seul appel, peu coûteux)."""
+    query = (
+        "Trouve l'URL directe de vente de billets pour ce concert précis :\n"
+        f"Artiste : {concert.artist}\n"
+        f"Salle : {concert.venue or '?'}\n"
+        f"Ville : {concert.city or '?'}\n"
+        f"Date : {concert.date or '?'}\n"
+    )
+    web_search = dict(config.WEB_SEARCH_TOOL)
+    web_search["max_uses"] = config.URL_REFINE_MAX_USES
+    try:
+        text = run_server_tool_loop(
+            client,
+            system=_REFINE_URL_SYSTEM,
+            user=query,
+            tools=[web_search],
+            model=settings.discovery_model,
+            effort="low",
+            max_tokens=300,
+        )
+    except Exception:
+        return None
+
+    text = (text or "").strip()
+    if not text or text.upper().startswith("AUCUNE"):
+        return None
+    match = re.search(r"https?://\S+", text)
+    if not match:
+        return None
+    url = match.group(0).rstrip(".,)\"'")
+    return None if _looks_like_generic_url(url) else url
 
 
 # --- collecte de la page ----------------------------------------------------

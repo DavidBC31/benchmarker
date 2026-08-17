@@ -37,6 +37,11 @@ FETCH_MAX_CONTENT_TOKENS = int(
     os.environ.get("BENCHMARKER_FETCH_MAX_CONTENT_TOKENS", "6000")
 )
 
+# Recherche ciblée max pour retrouver une URL directe de billetterie quand la
+# découverte n'a renvoyé qu'une page générique (page d'accueil/portail) ou rien.
+# Peu coûteux : un seul appel, uniquement pour les dates concernées.
+URL_REFINE_MAX_USES = int(os.environ.get("BENCHMARKER_URL_REFINE_MAX_USES", "2"))
+
 # Nombre max de continuations pause_turn dans une boucle d'outils serveur.
 MAX_CONTINUATIONS = 6
 
