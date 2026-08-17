@@ -39,8 +39,16 @@ def build_benchmark(
     log = progress or (lambda _msg: None)
 
     log(f"Découverte des dates… (profil : {profile or config.DEFAULT_PROFILE})")
-    concerts = discover(client, criteria, settings)
-    log(f"{len(concerts)} date(s) trouvée(s).")
+    concerts = discover(client, criteria, settings, progress=log)
+    if concerts:
+        log(f"{len(concerts)} date(s) trouvée(s).")
+    else:
+        log(
+            "0 date trouvée. Voir les lignes ci-dessus pour la cause (recherche "
+            "vide vs structuration vide) ; sinon, essaie des critères moins "
+            "restrictifs ou le profil 'equilibre'."
+        )
+        return concerts
 
     if not with_prices:
         return concerts

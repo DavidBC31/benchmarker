@@ -6,7 +6,7 @@ puis on structure les résultats en objets `Concert` (sans prix à ce stade).
 
 from __future__ import annotations
 
-from typing import List
+from typing import Callable, List, Optional
 
 import anthropic
 
@@ -28,16 +28,17 @@ Méthode :
 - Reste factuel : n'invente jamais une date, un lieu ou un prix. Si tu n'es pas sûr, ne l'inclus pas.
 - Identifie la nature de la date (date unique, tournée, festival) et le style musical.
 
-Règle STRICTE sur les URLs (le point le plus important) :
-- L'URL doit pointer DIRECTEMENT sur la fiche de vente de CET événement précis
-  (ex : contient un identifiant d'événement, un slug artiste+date, un chemin du
-  type /evenement/…, /event/…, /place-spectacle/…, /billets/…).
+Règle sur les URLs — IMPORTANT, à ne pas confondre avec le fait d'inclure la date :
+- Quand tu la trouves, l'URL doit pointer DIRECTEMENT sur la fiche de vente de
+  CET événement précis (ex : contient un identifiant d'événement, un slug
+  artiste+date, un chemin du type /evenement/…, /event/…, /place-spectacle/…, /billets/…).
 - N'indique JAMAIS l'URL d'une page d'accueil, d'un portail agrégateur
   d'événements (ex. jds.fr, infoconcert.com), d'une page de recherche ou
-  d'une liste d'événements. ARRIVER LE PLUS PRÉCIS POSSIBLE.
-- Si tu ne trouves pas d'URL directe vers la fiche de CET événement, laisse
-  l'URL vide plutôt que de mettre une page d'accueil ou un portail générique.
-  Une URL vide est préférable à une URL générique.
+  d'une liste d'événements : laisse alors le champ URL vide.
+- ATTENTION : l'absence d'URL directe ne doit JAMAIS te faire exclure une
+  date par ailleurs confirmée (artiste + date + salle trouvés). Inclus
+  systématiquement la date avec un champ URL vide plutôt que de l'omettre.
+  Mieux vaut une date sans URL qu'une date manquante.
 
 Tu produiras une liste de dates candidates ; l'extraction des prix se fait dans une étape ultérieure."""
 
@@ -46,6 +47,9 @@ structurée des dates de concerts trouvées. Pour chaque date, renseigne au maxi
 artiste, date (ISO), salle, ville, pays, jauge si connue, style, nature de l'événement,
 et l'URL de la page billetterie DIRECTE de cet événement (jamais une page d'accueil
 ou un portail générique — laisse le champ vide si tu n'as trouvé qu'une page générique).
+IMPORTANT : inclus TOUTES les dates confirmées dans les résultats de recherche
+ci-dessous, même celles sans URL directe. Ne rejette une date que si elle est
+hors critères ou si elle est un doublon.
 Ignore les doublons et les dates hors critères."""
 
 
@@ -53,9 +57,11 @@ def discover(
     client: anthropic.Anthropic,
     criteria: SearchCriteria,
     settings: config.RunSettings | None = None,
+    progress: Optional[Callable[[str], None]] = None,
 ) -> List[Concert]:
     """Retourne une liste de `Concert` candidats (sans grille tarifaire)."""
     settings = settings or config.resolve_settings()
+    log = progress or (lambda _msg: None)
     sources_hint = ", ".join(config.PREFERRED_SOURCES_FR)
     user = (
         "Trouve des dates de concerts correspondant aux critères suivants :\n\n"
@@ -77,8 +83,13 @@ def discover(
         effort=settings.discovery_effort,
     )
 
+    # Diagnostic explicite : distingue "la recherche web n'a rien remonté" de
+    # "la structuration n'a rien extrait" — sinon un 0 résultat est muet sur
+    # sa cause et oblige à deviner.
     if not findings:
+        log("  ! recherche web : aucun résultat retourné par le modèle.")
         return []
+    log(f"  recherche web : {len(findings)} caractère(s) de résultats bruts.")
 
     parsed = parse_structured(
         client,
@@ -87,6 +98,8 @@ def discover(
         material=findings,
         model=settings.structure_model,
     )
-    if not parsed:
+    if not parsed or not parsed.concerts:
+        preview = findings[:400].replace("\n", " ")
+        log(f"  ! structuration : 0 date extraite. Aperçu des résultats de recherche : {preview}…")
         return []
     return [discovered_to_concert(d) for d in parsed.concerts]

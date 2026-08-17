@@ -14,12 +14,23 @@ import pandas as pd
 from . import config
 from .models import Concert
 
+# Schéma explicite du DataFrame « long ». Garantit que toutes les colonnes
+# existent même quand `concerts` est vide (0 date trouvée) : sans ça,
+# `pd.DataFrame([])` n'a aucune colonne et tout accès (`df["price_eur"]`)
+# lève un KeyError en aval (summarize, recommend…).
+_FRAME_COLUMNS = [
+    "artist", "date", "venue", "city", "country", "capacity", "genre",
+    "event_type", "source_url", "price_confidence", "priced_at", "notes",
+    "category", "price", "currency", "price_eur", "fees_included",
+]
+
 
 def concerts_to_frame(concerts: List[Concert]) -> pd.DataFrame:
     """Aplati les concerts en un DataFrame « long » : une ligne par tarif.
 
     Les dates sans prix apparaissent tout de même (price NaN) pour garder une
-    trace de la couverture.
+    trace de la couverture. Renvoie toujours les mêmes colonnes, y compris
+    pour une liste vide.
     """
     rows: list[dict] = []
     for c in concerts:
@@ -52,7 +63,7 @@ def concerts_to_frame(concerts: List[Concert]) -> pd.DataFrame:
                 "price_eur": price_eur,
                 "fees_included": pc.fees_included,
             })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=_FRAME_COLUMNS)
 
 
 def _describe(series: pd.Series) -> dict:
