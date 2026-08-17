@@ -20,36 +20,41 @@ from .models import (
 )
 
 _DISCOVERY_SYSTEM = """Tu es un analyste billetterie spécialisé dans le live musical.
-Ta mission : trouver des dates de concerts réelles correspondant à des critères.
+Ta mission : trouver des dates de concerts réelles correspondant à des critères,
+avec un nombre LIMITÉ de recherches web.
 
 Méthode :
-- Utilise la recherche web pour identifier des dates concrètes (artiste, date, salle, ville).
-- Privilégie les sources billetterie fiables et les sites officiels de salles/festivals.
+- Priorise la LARGEUR : couvre autant de dates pertinentes que possible avec ton
+  budget de recherche, plutôt que d'approfondir une seule date en détail.
 - Reste factuel : n'invente jamais une date, un lieu ou un prix. Si tu n'es pas sûr, ne l'inclus pas.
 - Identifie la nature de la date (date unique, tournée, festival) et le style musical.
 
-Règle sur les URLs — IMPORTANT, à ne pas confondre avec le fait d'inclure la date :
-- Quand tu la trouves, l'URL doit pointer DIRECTEMENT sur la fiche de vente de
-  CET événement précis (ex : contient un identifiant d'événement, un slug
-  artiste+date, un chemin du type /evenement/…, /event/…, /place-spectacle/…, /billets/…).
-- N'indique JAMAIS l'URL d'une page d'accueil, d'un portail agrégateur
-  d'événements (ex. jds.fr, infoconcert.com), d'une page de recherche ou
-  d'une liste d'événements : laisse alors le champ URL vide.
-- ATTENTION : l'absence d'URL directe ne doit JAMAIS te faire exclure une
-  date par ailleurs confirmée (artiste + date + salle trouvés). Inclus
-  systématiquement la date avec un champ URL vide plutôt que de l'omettre.
-  Mieux vaut une date sans URL qu'une date manquante.
+Sur les URLs (secondaire — ne consomme PAS de recherche dédiée pour ça, une
+étape ultérieure s'en charge séparément) :
+- Note l'URL de billetterie uniquement si elle apparaît naturellement dans tes
+  résultats de recherche. Ne fais pas de recherche supplémentaire juste pour
+  vérifier ou préciser une URL — laisse le champ vide si tu n'as qu'une page
+  d'accueil générique (ex. jds.fr, infoconcert.com) ou rien du tout.
+- L'absence d'URL ne doit JAMAIS te faire exclure une date par ailleurs
+  confirmée (artiste + date + salle trouvés). Mieux vaut une date sans URL
+  qu'une date manquante.
+
+RÈGLE CRITIQUE si ton budget de recherche s'épuise ou qu'un appel est refusé :
+- Ne t'excuse JAMAIS et ne demande JAMAIS à l'utilisateur de renvoyer sa demande.
+- Réponds TOUJOURS avec la liste des dates que tu as déjà identifiées à ce
+  stade, même incomplète. Une réponse partielle vaut toujours mieux qu'aucune
+  réponse ou qu'un message d'excuse.
 
 Tu produiras une liste de dates candidates ; l'extraction des prix se fait dans une étape ultérieure."""
 
 _DISCOVERY_INSTRUCTION = """À partir des résultats de recherche ci-dessous, produis la liste
 structurée des dates de concerts trouvées. Pour chaque date, renseigne au maximum :
 artiste, date (ISO), salle, ville, pays, jauge si connue, style, nature de l'événement,
-et l'URL de la page billetterie DIRECTE de cet événement (jamais une page d'accueil
-ou un portail générique — laisse le champ vide si tu n'as trouvé qu'une page générique).
+et l'URL de billetterie si elle apparaît dans les résultats (laisse vide sinon —
+ne pas essayer de la deviner ou de la reconstruire).
 IMPORTANT : inclus TOUTES les dates confirmées dans les résultats de recherche
-ci-dessous, même celles sans URL directe. Ne rejette une date que si elle est
-hors critères ou si elle est un doublon.
+ci-dessous, même celles sans URL. Ne rejette une date que si elle est hors
+critères ou si elle est un doublon.
 Ignore les doublons et les dates hors critères."""
 
 

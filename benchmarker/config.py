@@ -29,7 +29,10 @@ WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search"}
 WEB_FETCH_TOOL = {"type": "web_fetch_20260209", "name": "web_fetch"}
 
 # Nombre max d'appels d'outils par étape (garde-fou coût/latence).
-MAX_SEARCH_USES = int(os.environ.get("BENCHMARKER_MAX_SEARCH_USES", "5"))
+# 6 recherches en découverte : la vérification d'URL ne s'y fait plus (elle
+# est déléguée à URL_REFINE_MAX_USES ci-dessous), donc le budget de découverte
+# sert uniquement à couvrir large — 6 suffit à un léger matelas de sécurité.
+MAX_SEARCH_USES = int(os.environ.get("BENCHMARKER_MAX_SEARCH_USES", "6"))
 MAX_FETCH_USES = int(os.environ.get("BENCHMARKER_MAX_FETCH_USES", "2"))
 
 # Plafond de tokens de contenu ramené par web_fetch dans le contexte (coût).

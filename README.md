@@ -149,7 +149,8 @@ Réglable par variables d'environnement (voir `benchmarker/config.py`) :
 | `BENCHMARKER_FETCH_STRATEGY` | `auto` | `auto` (Playwright puis fallback) / `playwright` / `web_fetch` |
 | `BENCHMARKER_DISCOVERY_EFFORT` | `medium` | Effort de la découverte |
 | `BENCHMARKER_EXTRACTION_EFFORT` | `low` | Effort du `web_fetch` |
-| `BENCHMARKER_MAX_SEARCH_USES` | `5` | Recherches web max par découverte |
+| `BENCHMARKER_MAX_SEARCH_USES` | `6` | Recherches web max par découverte |
+| `BENCHMARKER_URL_REFINE_MAX_USES` | `2` | Recherche ciblée max pour retrouver une URL directe (par date concernée) |
 | `BENCHMARKER_MAX_FETCH_USES` | `2` | Fetch max par date |
 | `BENCHMARKER_FETCH_MAX_CONTENT_TOKENS` | `6000` | Plafond de contenu ramené par `web_fetch` |
 
