@@ -22,6 +22,13 @@ Approche **hybride** en deux temps (la découverte web seule ne suffit pas pour 
 > voir la note `URL affinée : …` ou `Pas de fiche événement directe trouvée`
 > dans les résultats.
 
+> 💡 **Protections anti-bot.** Certaines billetteries coupent la connexion
+> face à un navigateur headless (ex. `ERR_HTTP2_PROTOCOL_ERROR`). Le rendu
+> Playwright désactive HTTP/2, masque le signal `navigator.webdriver` et
+> retente une fois avec un contexte frais sur ce type d'erreur réseau. Si ça
+> échoue malgré tout, la note `playwright : …` l'indique et le fallback
+> `web_fetch` prend le relais.
+
 > ⚠️ **Le point dur, ce sont les prix par catégorie.** Les grilles (Carré Or / Fosse / Cat. 1-2-3) sont souvent chargées en JavaScript, varient dans le temps (dynamic pricing, frais de loc) et ne sont pas toujours complètes. Chaque prix est donc **horodaté** et assorti d'un **niveau de confiance** (`grille_complete`, `grille_partielle`, `prix_a_partir_de`, `aucun_prix`). La couverture ne sera pas de 100 % — une validation humaine sur les cas incomplets reste recommandée.
 
 ## Installation

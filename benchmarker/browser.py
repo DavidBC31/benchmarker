@@ -65,7 +65,11 @@ class PageRenderer:
         self._pw = sync_playwright().start()
         launch_kwargs: dict = {
             "headless": self.headless,
-            "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+            # --disable-http2 : certains sites (billetteries incluses) coupent
+            # la connexion (ERR_HTTP2_PROTOCOL_ERROR) face à un navigateur
+            # headless en HTTP/2 ; HTTP/1.1 contourne le problème sans coût
+            # notable pour ce cas d'usage (une page à la fois).
+            "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-http2"],
         }
         exe = _chromium_executable()
         if exe:
@@ -90,30 +94,50 @@ class PageRenderer:
     def render(self, url: str) -> str:
         """Rend une URL et renvoie le texte visible (plafonné).
 
-        Lève une exception en cas d'échec de navigation ; l'appelant décide
-        quoi faire (fallback, note de confiance, etc.).
+        Retente une fois sur une erreur réseau/protocole (ex.
+        ERR_HTTP2_PROTOCOL_ERROR, connexion coupée par une protection anti-bot
+        intermittente) avec un contexte frais. Lève l'exception finale si
+        toutes les tentatives échouent ; l'appelant décide quoi faire ensuite
+        (fallback web_fetch, note de confiance, etc.).
         """
         if self._browser is None:
             raise RuntimeError("PageRenderer doit être utilisé comme context manager.")
 
-        context = self._browser.new_context(
-            ignore_https_errors=True,
-            locale="fr-FR",
-            user_agent=config.RENDER_USER_AGENT,
-        )
-        page = context.new_page()
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=self.nav_timeout_ms)
-            self._dismiss_cookie_banner(page)
-            # Laisse le temps au contenu JS (grilles tarifaires) de se charger.
+        last_exc: Optional[Exception] = None
+        for attempt in range(config.RENDER_MAX_ATTEMPTS):
+            context = self._browser.new_context(
+                ignore_https_errors=True,
+                locale="fr-FR",
+                user_agent=config.RENDER_USER_AGENT,
+                extra_http_headers={"Accept-Language": "fr-FR,fr;q=0.9"},
+            )
+            # Réduit le signal le plus évident de navigateur headless : certains
+            # sites bloquent agressivement sur ce seul indicateur, ce qui peut
+            # se traduire par une coupure réseau plutôt qu'un simple refus HTTP.
+            context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            )
+            page = context.new_page()
             try:
-                page.wait_for_load_state("networkidle", timeout=config.RENDER_IDLE_MS)
-            except Exception:
-                pass  # networkidle peut ne jamais arriver (trackers) — pas bloquant
-            text = page.inner_text("body")
-            return text[: self.text_cap]
-        finally:
-            context.close()
+                page.goto(url, wait_until="domcontentloaded", timeout=self.nav_timeout_ms)
+                self._dismiss_cookie_banner(page)
+                # Laisse le temps au contenu JS (grilles tarifaires) de se charger.
+                try:
+                    page.wait_for_load_state("networkidle", timeout=config.RENDER_IDLE_MS)
+                except Exception:
+                    pass  # networkidle peut ne jamais arriver (trackers) — pas bloquant
+                text = page.inner_text("body")
+                return text[: self.text_cap]
+            except Exception as exc:
+                last_exc = exc
+                is_network_error = "net::" in str(exc)
+                if not is_network_error or attempt == config.RENDER_MAX_ATTEMPTS - 1:
+                    raise
+                # Sinon : nouvelle tentative avec un contexte frais.
+            finally:
+                context.close()
+
+        raise last_exc  # pragma: no cover — sécurité, la boucle raise déjà au dernier essai
 
     def _dismiss_cookie_banner(self, page) -> None:
         """Tente de fermer un bandeau de consentement (best effort)."""

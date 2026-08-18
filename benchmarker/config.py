@@ -72,6 +72,10 @@ FETCH_STRATEGY = os.environ.get("BENCHMARKER_FETCH_STRATEGY", "auto")
 RENDER_TIMEOUT_MS = int(os.environ.get("BENCHMARKER_RENDER_TIMEOUT_MS", "30000"))
 RENDER_IDLE_MS = int(os.environ.get("BENCHMARKER_RENDER_IDLE_MS", "4000"))
 RENDER_TEXT_CAP = int(os.environ.get("BENCHMARKER_RENDER_TEXT_CAP", "12000"))
+# Tentatives sur erreur réseau/protocole (ex. ERR_HTTP2_PROTOCOL_ERROR) avant
+# d'abandonner — certains sites coupent la connexion de façon intermittente
+# face à un navigateur headless ; un contexte frais suffit parfois.
+RENDER_MAX_ATTEMPTS = int(os.environ.get("BENCHMARKER_RENDER_MAX_ATTEMPTS", "2"))
 RENDER_USER_AGENT = os.environ.get(
     "BENCHMARKER_RENDER_UA",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
