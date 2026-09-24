@@ -102,7 +102,10 @@ Renvoie une fourchette (25e–75e percentile) et une médiane par catégorie, av
 
 ## Interface web
 
-Une interface web locale permet de piloter l'outil sans terminal : formulaire de critères, progression en direct, tableau des résultats (avec la colonne `price_confidence`), téléchargements et préconisation tarifaire.
+Une interface web locale permet de piloter l'outil sans terminal, avec une direction artistique dédiée (glassmorphism iOS 18, navbar pilule, bleu `#1450E2`) :
+
+- **Nouveau** : formulaire de critères, progression en direct, résultats (tuiles de synthèse, tableau par catégorie, détail des dates avec la colonne `price_confidence` colorée), téléchargements CSV/JSON/synthèse, préconisation tarifaire.
+- **Historique** : liste des runs passés (persistée sur disque — survit aux redémarrages du serveur), avec critères utilisés, statut, compteurs, bouton **Voir** (recharge les résultats) et **Recharger les critères** (pré-remplit le formulaire pour relancer une recherche similaire).
 
 Lancement en local :
 

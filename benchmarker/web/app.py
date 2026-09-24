@@ -7,14 +7,19 @@ Conçue pour un hébergement auto-hébergé derrière Cloudflare :
   saisie dans le navigateur.
 
 Les benchmarks tournent en tâche de fond ; l'UI interroge la progression.
+Chaque run écrit un fichier de métadonnées (`_meta.json`) en plus des exports,
+ce qui permet de reconstituer l'historique même après un redémarrage du
+serveur (les jobs en mémoire, eux, sont perdus au redémarrage).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 from typing import Optional
@@ -120,6 +125,8 @@ def create_app() -> Flask:
         with _JOBS_LOCK:
             _JOBS[job.id] = job
 
+        _write_meta(job.id, criteria, profile, strategy, with_prices, status="running")
+
         thread = threading.Thread(
             target=_run_job,
             args=(job, criteria, profile, strategy, with_prices),
@@ -140,20 +147,29 @@ def create_app() -> Flask:
     @login_required
     def api_result(job_id: str):
         job = _JOBS.get(job_id)
-        if not job:
-            return jsonify(error="job inconnu"), 404
-        if job.status == "running":
+        if job and job.status == "running":
             return jsonify(error="job en cours"), 409
-        return jsonify(summary=job.summary, rows=_rows(job.concerts))
+        if job and job.status == "done":
+            return jsonify(summary=job.summary, rows=_rows(job.concerts))
+
+        # Pas (ou plus) en mémoire (redémarrage serveur, ancien run…) : on
+        # retombe sur les fichiers persistés pour que l'historique reste
+        # consultable au-delà de la durée de vie du process.
+        concerts = _load_concerts_from_disk(job_id)
+        if concerts is None:
+            return jsonify(error="job inconnu"), 404
+        df = analysis.concerts_to_frame(concerts)
+        return jsonify(summary=analysis.summarize(df), rows=_rows(concerts))
 
     @app.route("/api/recommend/<job_id>", methods=["POST"])
     @login_required
     def api_recommend(job_id: str):
         job = _JOBS.get(job_id)
-        if not job or not job.concerts:
+        concerts = job.concerts if (job and job.concerts) else _load_concerts_from_disk(job_id)
+        if not concerts:
             return jsonify(error="pas de benchmark disponible"), 404
         data = request.get_json(force=True) or {}
-        df = analysis.concerts_to_frame(job.concerts)
+        df = analysis.concerts_to_frame(concerts)
         reco = recommend(
             df,
             genre=data.get("genre") or None,
@@ -161,6 +177,12 @@ def create_app() -> Flask:
             artist=data.get("artist") or None,
         )
         return jsonify(reco=reco)
+
+    # --- Historique ----------------------------------------------------------
+    @app.route("/api/history")
+    @login_required
+    def api_history():
+        return jsonify(runs=_list_history())
 
     # --- Téléchargements ---------------------------------------------------
     @app.route("/download/<job_id>.<ext>")
@@ -202,10 +224,8 @@ def _run_job(
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         base = OUT_DIR / f"benchmark_{job.id}"
         df.to_csv(base.with_suffix(".csv"), index=False)
-        import json as _json
-
         base.with_suffix(".json").write_text(
-            _json.dumps([c.model_dump() for c in concerts], ensure_ascii=False, indent=2),
+            json.dumps([c.model_dump() for c in concerts], ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         base.with_name(base.name + "_synthese.md").write_text(
@@ -213,10 +233,87 @@ def _run_job(
         )
         log("Terminé.")
         job.status = "done"
+        _write_meta(
+            job.id, criteria, profile, strategy, with_prices,
+            status="done", summary=job.summary,
+        )
     except Exception as exc:  # noqa: BLE001
         job.error = str(exc)
         log(f"Erreur : {exc}")
         job.status = "error"
+        _write_meta(
+            job.id, criteria, profile, strategy, with_prices,
+            status="error", error=str(exc),
+        )
+
+
+# --- Historique / persistance -----------------------------------------------
+def _meta_path(job_id: str) -> Path:
+    return OUT_DIR / f"benchmark_{job_id}_meta.json"
+
+
+def _write_meta(
+    job_id: str,
+    criteria: SearchCriteria,
+    profile: Optional[str],
+    strategy: Optional[str],
+    with_prices: bool,
+    *,
+    status: str,
+    summary: Optional[dict] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Persiste les métadonnées d'un run pour l'historique (survit aux redémarrages)."""
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = _meta_path(job_id)
+    meta = {}
+    if path.exists():
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            meta = {}
+    meta.update(
+        {
+            "job_id": job_id,
+            "created_at": meta.get("created_at") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "criteria": criteria.model_dump(),
+            "profile": profile or config.DEFAULT_PROFILE,
+            "strategy": strategy,
+            "with_prices": with_prices,
+            "status": status,
+        }
+    )
+    if summary is not None:
+        meta["summary"] = summary
+    if error is not None:
+        meta["error"] = error
+    path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _list_history() -> list[dict]:
+    """Liste les runs passés (les plus récents d'abord) à partir des métadonnées persistées."""
+    if not OUT_DIR.exists():
+        return []
+    runs = []
+    for meta_file in OUT_DIR.glob("benchmark_*_meta.json"):
+        try:
+            runs.append(json.loads(meta_file.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            continue
+    runs.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+    return runs
+
+
+def _load_concerts_from_disk(job_id: str) -> Optional[list[Concert]]:
+    """Recharge les `Concert` d'un run passé depuis son export JSON."""
+    path = OUT_DIR / f"benchmark_{job_id}.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [Concert(**c) for c in data]
+    except (json.JSONDecodeError, OSError, ValueError):
+        return None
 
 
 # --- Helpers ---------------------------------------------------------------
