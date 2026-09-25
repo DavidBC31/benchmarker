@@ -12,6 +12,36 @@ from .discovery import discover
 from .extraction import extract_prices
 from .llm import build_client
 from .models import Concert, SearchCriteria
+from .similar_artists import find_similar_artists
+
+
+def resolve_target_artists(
+    client: anthropic.Anthropic,
+    criteria: SearchCriteria,
+    settings: config.RunSettings,
+    log: Callable[[str], None],
+) -> SearchCriteria:
+    """Résout `reference_artist` en `target_artists` (+ style déduit si absent).
+
+    Idempotente et sans coût si `target_artists` est déjà renseigné ou si
+    `reference_artist` est absent : sûr à appeler explicitement en amont (pour
+    exposer les critères résolus, ex. dans l'historique) puis à nouveau depuis
+    `build_benchmark` sans déclencher une seconde recherche.
+    """
+    if not criteria.reference_artist or criteria.target_artists:
+        return criteria
+    log(f"Recherche d'artistes comparables à « {criteria.reference_artist} »…")
+    similar = find_similar_artists(client, criteria.reference_artist, settings=settings)
+    artists = [criteria.reference_artist] + similar.similar_artists
+    resolved = criteria.model_copy(
+        update={
+            "target_artists": artists,
+            "genres": criteria.genres or ([similar.inferred_genre] if similar.inferred_genre else []),
+        }
+    )
+    genre_note = f" (style détecté : {similar.inferred_genre})" if similar.inferred_genre else ""
+    log(f"Artistes retenus : {', '.join(artists)}{genre_note}")
+    return resolved
 
 
 def build_benchmark(
@@ -25,6 +55,10 @@ def build_benchmark(
 ) -> List[Concert]:
     """Construit le benchmark complet pour un jeu de critères.
 
+    0. Si `criteria.reference_artist` est fourni (et `target_artists` vide) :
+       résolution d'artistes comparables (un seul appel de recherche), qui
+       oriente la découverte sur cette liste précise plutôt que sur un style
+       générique. Le style est aussi déduit automatiquement si absent.
     1. Découverte des dates (recherche web).
     2. Extraction des prix par date, si `with_prices`.
 
@@ -37,6 +71,8 @@ def build_benchmark(
     client = client or build_client()
     settings = config.resolve_settings(profile, strategy)
     log = progress or (lambda _msg: None)
+
+    criteria = resolve_target_artists(client, criteria, settings, log)
 
     log(f"Découverte des dates… (profil : {profile or config.DEFAULT_PROFILE})")
     concerts = discover(client, criteria, settings, progress=log)

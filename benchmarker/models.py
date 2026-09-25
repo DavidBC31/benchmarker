@@ -178,6 +178,21 @@ class PriceExtraction(BaseModel):
 class SearchCriteria(BaseModel):
     """Critères de recherche fournis par l'utilisateur."""
 
+    reference_artist: Optional[str] = Field(
+        default=None,
+        description=(
+            "Artiste de référence : l'outil recherche des artistes comparables "
+            "(même style, notoriété et taille de salle) pour orienter la découverte, "
+            "plutôt que de se fier uniquement à 'genres'."
+        ),
+    )
+    target_artists: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Liste résolue d'artistes à rechercher (renseignée automatiquement à "
+            "partir de reference_artist ; peut aussi être fournie directement)."
+        ),
+    )
     genres: List[str] = Field(
         default_factory=list, description="Styles musicaux ciblés."
     )
@@ -205,6 +220,8 @@ class SearchCriteria(BaseModel):
     def to_prompt(self) -> str:
         """Rend les critères sous forme de texte pour le prompt de découverte."""
         parts: List[str] = []
+        if self.target_artists:
+            parts.append(f"- Artistes ciblés (rechercher CES artistes précisément) : {', '.join(self.target_artists)}")
         if self.genres:
             parts.append(f"- Styles musicaux : {', '.join(self.genres)}")
         if self.location:
@@ -223,3 +240,16 @@ class SearchCriteria(BaseModel):
         if self.extra:
             parts.append(f"- Contraintes additionnelles : {self.extra}")
         return "\n".join(parts)
+
+
+class SimilarArtistsResult(BaseModel):
+    """Sortie structurée de la résolution d'artistes comparables."""
+
+    reference_artist: str = Field(description="Artiste de référence fourni par l'utilisateur.")
+    inferred_genre: Optional[str] = Field(
+        default=None, description="Style musical dominant de l'artiste de référence."
+    )
+    similar_artists: List[str] = Field(
+        default_factory=list,
+        description="Artistes comparables (même style, notoriété, taille de salle). Ne pas inclure l'artiste de référence.",
+    )

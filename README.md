@@ -73,6 +73,20 @@ Sorties générées :
 
 Option `--no-prices` : découverte seule (rapide), sans extraction tarifaire.
 
+#### Cibler par artiste de référence
+
+Plutôt que (ou en complément de) `--genre`, on peut fournir un artiste de référence : l'outil recherche d'abord des artistes comparables (même style, notoriété, taille de salle), puis oriente la découverte sur cette liste précise plutôt que sur un style générique.
+
+```bash
+python -m benchmarker.cli search \
+  --reference-artist "PLK" \
+  --location France \
+  --capacity-min 3000 --capacity-max 20000 \
+  -o out/benchmark.csv
+```
+
+Le style musical est aussi déduit automatiquement si `--genre` n'est pas fourni. Cette résolution ne coûte qu'un seul appel de recherche supplémentaire, effectué une fois en amont de la découverte.
+
 #### Stratégie de récupération des prix
 
 Certaines billetteries chargent leur grille tarifaire en JavaScript, invisible pour un simple fetch. On choisit la stratégie via `--fetch-strategy` :
@@ -104,7 +118,7 @@ Renvoie une fourchette (25e–75e percentile) et une médiane par catégorie, av
 
 Une interface web locale permet de piloter l'outil sans terminal, avec une direction artistique dédiée (glassmorphism iOS 18, navbar pilule, bleu `#1450E2`) :
 
-- **Nouveau** : formulaire de critères, progression en direct, résultats (tuiles de synthèse, tableau par catégorie, détail des dates avec la colonne `price_confidence` colorée), téléchargements CSV/JSON/synthèse, préconisation tarifaire.
+- **Nouveau** : formulaire de critères (dont un champ optionnel « Artiste de référence » pour cibler des artistes comparables plutôt que/en complément d'un style), progression en direct, résultats (tuiles de synthèse, tableau par catégorie, détail des dates avec la colonne `price_confidence` colorée), téléchargements CSV/JSON/synthèse, préconisation tarifaire.
 - **Historique** : liste des runs passés (persistée sur disque — survit aux redémarrages du serveur), avec critères utilisés, statut, compteurs, bouton **Voir** (recharge les résultats) et **Recharger les critères** (pré-remplit le formulaire pour relancer une recherche similaire).
 
 Lancement en local :
@@ -163,6 +177,8 @@ Réglable par variables d'environnement (voir `benchmarker/config.py`) :
 | `BENCHMARKER_URL_REFINE_MAX_USES` | `2` | Recherche ciblée max pour retrouver une URL directe (par date concernée) |
 | `BENCHMARKER_MAX_FETCH_USES` | `2` | Fetch max par date |
 | `BENCHMARKER_FETCH_MAX_CONTENT_TOKENS` | `6000` | Plafond de contenu ramené par `web_fetch` |
+| `BENCHMARKER_SIMILAR_ARTISTS_MAX_USES` | `4` | Recherches web max pour résoudre un artiste de référence |
+| `BENCHMARKER_SIMILAR_ARTISTS_COUNT` | `6` | Nombre d'artistes comparables visés |
 
 > Pour minimiser encore le coût : `BENCHMARKER_FETCH_STRATEGY=playwright` supprime totalement le fallback payant (au risque de rater les pages où le rendu ne suffit pas).
 
@@ -173,6 +189,7 @@ benchmarker/
 ├── config.py       # modèle, outils, sources, devises
 ├── models.py       # schéma Pydantic (Concert, PriceCategory, SearchCriteria…)
 ├── llm.py          # client + boucle d'outils serveur + extraction structurée
+├── similar_artists.py  # résolution artiste de référence → artistes comparables
 ├── discovery.py    # étape 1 : découverte des dates
 ├── extraction.py   # étape 2 : extraction des prix
 ├── analysis.py     # stats pandas + export

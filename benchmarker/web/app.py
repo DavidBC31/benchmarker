@@ -38,7 +38,7 @@ from flask import (
 from .. import analysis, config
 from ..llm import build_client
 from ..models import Concert, SearchCriteria
-from ..pipeline import build_benchmark
+from ..pipeline import build_benchmark, resolve_target_artists
 from ..recommend import recommend
 
 OUT_DIR = Path(os.environ.get("BENCHMARKER_OUT_DIR", "out"))
@@ -209,6 +209,14 @@ def _run_job(
 
     try:
         client = build_client()  # clé résolue côté serveur (env)
+        settings = config.resolve_settings(profile, strategy)
+        # Résolu explicitement ici (et non seulement dans build_benchmark) pour
+        # que la méta/l'historique reflètent les critères réellement utilisés
+        # (target_artists, style déduit) — idempotent, donc aucun coût
+        # supplémentaire quand build_benchmark la ré-appliquera juste après.
+        criteria = resolve_target_artists(client, criteria, settings, log)
+        _write_meta(job.id, criteria, profile, strategy, with_prices, status="running")
+
         concerts = build_benchmark(
             criteria,
             client=client,
@@ -319,6 +327,7 @@ def _load_concerts_from_disk(job_id: str) -> Optional[list[Concert]]:
 # --- Helpers ---------------------------------------------------------------
 def _criteria_from_payload(data: dict) -> SearchCriteria:
     return SearchCriteria(
+        reference_artist=(data.get("reference_artist") or "").strip() or None,
         genres=_as_list(data.get("genres")),
         location=data.get("location") or None,
         countries=_as_list(data.get("countries")) or ["France"],

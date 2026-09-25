@@ -288,6 +288,11 @@
 
     <div class="glass-card">
       <h2>Critères de recherche</h2>
+      <div style="margin-bottom:14px">
+        <label>Artiste de référence <span style="font-weight:400">(optionnel)</span></label>
+        <input id="reference_artist" placeholder="ex. PLK">
+        <p class="meta" style="margin-top:6px">Si renseigné, l'outil recherche des artistes comparables (même style, notoriété, taille de salle) et oriente la découverte sur cette liste précise, en complément ou à la place du style ci-dessous.</p>
+      </div>
       <div class="grid">
         <div><label>Styles musicaux</label><input id="genres" placeholder="rap, hip-hop"></div>
         <div><label>Zone géographique</label><input id="location" placeholder="France" value="France"></div>
@@ -382,6 +387,7 @@ function switchView(name) {
 // --- Lancement d'un run ------------------------------------------------------
 $("run").addEventListener("click", async () => {
   const payload = {
+    reference_artist: $("reference_artist").value,
     genres: $("genres").value, location: $("location").value,
     capacity_min: $("capacity_min").value, capacity_max: $("capacity_max").value,
     date_from: $("date_from").value, date_to: $("date_to").value,
@@ -485,7 +491,11 @@ async function loadHistory() {
   $("history-list").innerHTML = runs.map(r => {
     byJobId[r.job_id] = r;
     const c = r.criteria || {};
-    const critLabel = [c.genres && c.genres.length ? c.genres.join(', ') : null, c.location].filter(Boolean).join(' · ') || 'Sans critère de style/zone';
+    const critLabel = [
+      c.reference_artist ? `≈ ${c.reference_artist}` : null,
+      c.genres && c.genres.length ? c.genres.join(', ') : null,
+      c.location,
+    ].filter(Boolean).join(' · ') || 'Sans critère de style/zone';
     const dateLabel = new Date(r.created_at).toLocaleString('fr-FR', {dateStyle:'medium', timeStyle:'short'});
     const s = r.summary || {};
     const statusBadge = r.status === 'done' ? `<span class="badge b-done">terminé</span>`
@@ -528,6 +538,7 @@ function viewHistoryRun(jobId) {
 
 function reloadCriteria(r) {
   const c = r.criteria || {};
+  $("reference_artist").value = c.reference_artist || "";
   $("genres").value = (c.genres || []).join(", ");
   $("location").value = c.location || "";
   $("capacity_min").value = c.capacity_min ?? "";

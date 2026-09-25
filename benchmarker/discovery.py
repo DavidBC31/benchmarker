@@ -28,6 +28,10 @@ Méthode :
   budget de recherche, plutôt que d'approfondir une seule date en détail.
 - Reste factuel : n'invente jamais une date, un lieu ou un prix. Si tu n'es pas sûr, ne l'inclus pas.
 - Identifie la nature de la date (date unique, tournée, festival) et le style musical.
+- Si des « artistes ciblés » sont fournis dans les critères : concentre tes
+  recherches sur CES artistes précis (une ou plusieurs dates par artiste,
+  chacun a déjà été sélectionné en amont pour sa pertinence). Ne cherche pas
+  d'autres artistes dans ce cas — répartis ton budget de recherche entre eux.
 
 Sur les URLs (secondaire — ne consomme PAS de recherche dédiée pour ça, une
 étape ultérieure s'en charge séparément) :

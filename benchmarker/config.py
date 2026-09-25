@@ -45,6 +45,11 @@ FETCH_MAX_CONTENT_TOKENS = int(
 # Peu coûteux : un seul appel, uniquement pour les dates concernées.
 URL_REFINE_MAX_USES = int(os.environ.get("BENCHMARKER_URL_REFINE_MAX_USES", "2"))
 
+# Résolution d'artistes comparables à partir d'un artiste de référence (un seul
+# appel par run, uniquement si l'utilisateur fournit un artiste de référence).
+SIMILAR_ARTISTS_MAX_USES = int(os.environ.get("BENCHMARKER_SIMILAR_ARTISTS_MAX_USES", "4"))
+SIMILAR_ARTISTS_COUNT = int(os.environ.get("BENCHMARKER_SIMILAR_ARTISTS_COUNT", "6"))
+
 # Nombre max de continuations pause_turn dans une boucle d'outils serveur.
 MAX_CONTINUATIONS = 6
 

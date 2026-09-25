@@ -121,6 +121,7 @@ def _load_criteria(args: argparse.Namespace) -> SearchCriteria:
         data = json.loads(Path(args.criteria).read_text(encoding="utf-8"))
         return SearchCriteria(**data)
     return SearchCriteria(
+        reference_artist=args.reference_artist,
         genres=args.genre or [],
         location=args.location,
         countries=args.country or ["France"],
@@ -154,6 +155,11 @@ def build_parser() -> argparse.ArgumentParser:
     # search
     s = sub.add_parser("search", help="Construire un benchmark depuis des critères.")
     s.add_argument("--criteria", help="Fichier JSON de critères (prioritaire).")
+    s.add_argument(
+        "--reference-artist",
+        dest="reference_artist",
+        help="Artiste de référence : recherche des artistes comparables (style, notoriété, taille de salle) pour orienter la découverte.",
+    )
     s.add_argument("--genre", action="append", help="Style musical (répétable).")
     s.add_argument("--location", help="Zone géographique (ville/région/pays).")
     s.add_argument("--country", action="append", help="Pays (répétable).")
