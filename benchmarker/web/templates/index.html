@@ -453,12 +453,13 @@ function renderResults(s, rows) {
   }
   $("cat-table").innerHTML = ct;
 
-  let html = `<tr><th>Artiste</th><th>Date</th><th>Lieu</th><th>Ville</th><th>Jauge</th><th>Prix</th><th>Confiance</th></tr>`;
+  let html = `<tr><th>Artiste</th><th>Date</th><th>Lieu</th><th>Ville</th><th>Jauge</th><th>Prix</th><th>Confiance</th><th>Note</th></tr>`;
   html += (rows||[]).map(r => `<tr>
     <td>${esc(r.artist)}</td><td>${esc(r.date)||""}</td><td class="wrap">${esc(r.venue)||""}</td>
     <td>${esc(r.city)||""}</td><td>${r.capacity ? `<span class="chip-capacity">${r.capacity}</span>` : ""}</td>
     <td class="wrap">${esc(r.prices)||"<span style='color:var(--apple-text-secondary)'>—</span>"}</td>
-    <td><span class="conf c-${r.price_confidence}">${r.price_confidence}</span></td></tr>`).join("");
+    <td><span class="conf c-${r.price_confidence}">${r.price_confidence}</span></td>
+    <td class="wrap meta" title="${esc(r.notes)||""}">${esc(r.notes)||""}</td></tr>`).join("");
   $("rows-table").innerHTML = html;
 }
 

@@ -41,7 +41,11 @@ from ..models import Concert, SearchCriteria
 from ..pipeline import build_benchmark, resolve_target_artists
 from ..recommend import recommend
 
-OUT_DIR = Path(os.environ.get("BENCHMARKER_OUT_DIR", "out"))
+# Ancré à la racine du projet (et non au cwd du process, qui varie selon la
+# façon dont le service est lancé — launchd, terminal, etc. — et a causé des
+# runs "perdus" quand deux instances résolvaient des OUT_DIR différents).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+OUT_DIR = Path(os.environ.get("BENCHMARKER_OUT_DIR") or (_PROJECT_ROOT / "out"))
 
 
 # --- État des jobs en mémoire ----------------------------------------------
