@@ -208,7 +208,10 @@ def _refine_source_url(
             user=query,
             tools=[web_search],
             model=settings.discovery_model,
-            effort="low",
+            # "medium" (et non "low") : avec un budget de recherche élargi
+            # (URL_REFINE_MAX_USES), autant que le raisonnement en tire parti
+            # plutôt que de s'arrêter sur la première page trouvée.
+            effort="medium",
             max_tokens=300,
         )
     except Exception:

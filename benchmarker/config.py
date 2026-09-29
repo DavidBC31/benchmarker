@@ -41,9 +41,14 @@ FETCH_MAX_CONTENT_TOKENS = int(
 )
 
 # Recherche ciblée max pour retrouver une URL directe de billetterie quand la
-# découverte n'a renvoyé qu'une page générique (page d'accueil/portail) ou rien.
-# Peu coûteux : un seul appel, uniquement pour les dates concernées.
-URL_REFINE_MAX_USES = int(os.environ.get("BENCHMARKER_URL_REFINE_MAX_USES", "2"))
+# découverte n'a renvoyé qu'une page générique (page d'accueil/portail) ou rien
+# (et, séparément, pour chercher une source alternative sur un domaine à forte
+# friction — cf. HIGH_FRICTION_DOMAINS). Relevé de 2 à 4 : sur un run réel,
+# c'était la première cause d'échec (aucune URL trouvée, ni en découverte ni
+# en affinage) — un budget de recherche plus large par date concernée
+# améliore le taux de succès au prix d'un coût légèrement plus élevé, un
+# compromis accepté explicitement (option "plus cher" plutôt que qualité).
+URL_REFINE_MAX_USES = int(os.environ.get("BENCHMARKER_URL_REFINE_MAX_USES", "4"))
 
 # Résolution d'artistes comparables à partir d'un artiste de référence (un seul
 # appel par run, uniquement si l'utilisateur fournit un artiste de référence).
