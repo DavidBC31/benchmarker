@@ -48,6 +48,14 @@ DISCOVERY_SEARCH_USES_PER_ARTIST = int(
 )
 MAX_SEARCH_USES_CAP = int(os.environ.get("BENCHMARKER_MAX_SEARCH_USES_CAP", "20"))
 
+# Timeout explicite par appel LLM (secondes). Sans ça, le SDK utilise son
+# défaut (10 min) : un appel qui traîne (latence réseau, modèle qui rame)
+# bloque silencieusement le job pendant tout ce temps sans le moindre signal
+# dans l'UI — observé en conditions réelles sur l'étape de résolution
+# d'artistes comparables. Un échec net et rapide (job en erreur, message
+# visible) vaut mieux qu'un blocage muet.
+LLM_REQUEST_TIMEOUT_S = float(os.environ.get("BENCHMARKER_LLM_REQUEST_TIMEOUT_S", "180"))
+
 # Plafond de tokens de contenu ramené par web_fetch dans le contexte (coût).
 FETCH_MAX_CONTENT_TOKENS = int(
     os.environ.get("BENCHMARKER_FETCH_MAX_CONTENT_TOKENS", "6000")

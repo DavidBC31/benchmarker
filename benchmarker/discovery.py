@@ -102,6 +102,12 @@ def discover(
     else:
         web_search["max_uses"] = settings.max_search_uses
 
+    # Le timeout par défaut (config.LLM_REQUEST_TIMEOUT_S) suppose un budget de
+    # recherche standard ; avec un budget élargi (artistes ciblés, jusqu'à
+    # MAX_SEARCH_USES_CAP), on l'allonge proportionnellement pour ne pas couper
+    # un appel qui a légitimement besoin de plus de temps.
+    timeout = config.LLM_REQUEST_TIMEOUT_S * max(1, web_search["max_uses"] / config.MAX_SEARCH_USES)
+
     findings = run_server_tool_loop(
         client,
         system=_DISCOVERY_SYSTEM,
@@ -109,6 +115,7 @@ def discover(
         tools=[web_search],
         model=settings.discovery_model,
         effort=settings.discovery_effort,
+        timeout=timeout,
     )
 
     # Diagnostic explicite : distingue "la recherche web n'a rien remonté" de

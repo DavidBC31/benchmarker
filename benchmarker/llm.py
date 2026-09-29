@@ -46,14 +46,20 @@ def run_server_tool_loop(
     model: Optional[str] = None,
     effort: str = "medium",
     max_tokens: int = 8000,
+    timeout: Optional[float] = None,
 ) -> str:
     """Exécute une conversation utilisant des outils serveur (recherche/fetch).
 
     Gère le `stop_reason == "pause_turn"` en renvoyant l'assistant pour reprise,
     avec un garde-fou sur le nombre de continuations. Renvoie le texte agrégé
     de la réponse finale.
+
+    `timeout` : secondes avant abandon de CET appel (par défaut
+    `config.LLM_REQUEST_TIMEOUT_S`, pas le défaut SDK de 10 min) — un appel qui
+    traîne doit échouer clairement plutôt que bloquer le job en silence.
     """
     model = model or config.MODEL
+    timeout = timeout if timeout is not None else config.LLM_REQUEST_TIMEOUT_S
     messages: list = [{"role": "user", "content": user}]
 
     def _call() -> "anthropic.types.Message":
@@ -65,6 +71,7 @@ def run_server_tool_loop(
             output_config={"effort": effort},
             tools=tools,
             messages=messages,
+            timeout=timeout,
         )
 
     response = _call()
@@ -89,6 +96,7 @@ def parse_structured(
     material: str,
     model: Optional[str] = None,
     max_tokens: int = 8000,
+    timeout: Optional[float] = None,
 ) -> Optional[T]:
     """Structure du texte libre en un modèle Pydantic via `messages.parse`.
 
@@ -96,13 +104,17 @@ def parse_structured(
     structurer ; `instruction` explique ce qu'on attend. Tâche mécanique : on
     utilise par défaut le modèle le moins cher (STRUCTURE_MODEL), sans thinking
     ni effort (la sortie structurée impose déjà le format).
+
+    `timeout` : voir `run_server_tool_loop` — même logique d'échec rapide.
     """
     model = model or config.STRUCTURE_MODEL
+    timeout = timeout if timeout is not None else config.LLM_REQUEST_TIMEOUT_S
     prompt = f"{instruction}\n\n--- MATÉRIAU À STRUCTURER ---\n{material}"
     response = client.messages.parse(
         model=model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
         output_format=schema,
+        timeout=timeout,
     )
     return response.parsed_output
