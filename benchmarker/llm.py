@@ -63,7 +63,14 @@ def run_server_tool_loop(
     messages: list = [{"role": "user", "content": user}]
 
     def _call() -> "anthropic.types.Message":
-        return client.messages.create(
+        # En streaming (et non .create()) : une requête avec "thinking" + outils
+        # serveur peut rester silencieuse plusieurs minutes (recherche en cours,
+        # raisonnement) sans émettre le moindre octet en mode non-streaming — un
+        # proxy/équilibreur intermédiaire coupe alors la connexion pour inactivité
+        # ("Request timed out or interrupted", observé en conditions réelles sur
+        # cette étape précise). Le streaming envoie des événements en continu et
+        # évite ce problème (recommandation officielle Anthropic pour ce cas).
+        with client.messages.stream(
             model=model,
             max_tokens=max_tokens,
             system=system,
@@ -72,7 +79,10 @@ def run_server_tool_loop(
             tools=tools,
             messages=messages,
             timeout=timeout,
-        )
+        ) as stream:
+            for _event in stream:
+                pass
+            return stream.get_final_message()
 
     response = _call()
 
