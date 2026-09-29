@@ -87,7 +87,20 @@ def discover(
     )
 
     web_search = dict(config.WEB_SEARCH_TOOL)
-    web_search["max_uses"] = settings.max_search_uses
+    n_targets = len(criteria.target_artists)
+    if n_targets:
+        # Budget proportionnel au nombre d'artistes ciblés (répartition
+        # explicite demandée dans le prompt) plutôt qu'un plafond fixe pensé
+        # pour une recherche par style générique — sinon le budget s'épuise
+        # avant d'avoir couvert chaque artiste, et le modèle abandonne trop tôt.
+        web_search["max_uses"] = min(
+            config.MAX_SEARCH_USES_CAP,
+            max(settings.max_search_uses, n_targets * config.DISCOVERY_SEARCH_USES_PER_ARTIST),
+        )
+        log(f"  budget de recherche découverte : {web_search['max_uses']} "
+            f"(pour {n_targets} artiste(s) ciblé(s))")
+    else:
+        web_search["max_uses"] = settings.max_search_uses
 
     findings = run_server_tool_loop(
         client,

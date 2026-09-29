@@ -31,9 +31,22 @@ WEB_FETCH_TOOL = {"type": "web_fetch_20260209", "name": "web_fetch"}
 # Nombre max d'appels d'outils par étape (garde-fou coût/latence).
 # 6 recherches en découverte : la vérification d'URL ne s'y fait plus (elle
 # est déléguée à URL_REFINE_MAX_USES ci-dessous), donc le budget de découverte
-# sert uniquement à couvrir large — 6 suffit à un léger matelas de sécurité.
+# sert uniquement à couvrir large — 6 suffit à un léger matelas de sécurité
+# pour une recherche par style générique.
 MAX_SEARCH_USES = int(os.environ.get("BENCHMARKER_MAX_SEARCH_USES", "6"))
 MAX_FETCH_USES = int(os.environ.get("BENCHMARKER_MAX_FETCH_USES", "2"))
+
+# Avec un artiste de référence, la découverte cible une LISTE d'artistes
+# précis (répartition explicite du budget de recherche entre eux, cf.
+# discovery.py) : un budget fixe de 6 devient vite insuffisant (ex. 7
+# artistes = moins d'une recherche chacun), ce qui a provoqué en conditions
+# réelles un épuisement précoce du budget suivi d'un abandon prématuré du
+# modèle. Le budget de découverte croît donc avec le nombre d'artistes
+# ciblés, jusqu'à ce plafond (coût plus élevé, accepté explicitement).
+DISCOVERY_SEARCH_USES_PER_ARTIST = int(
+    os.environ.get("BENCHMARKER_DISCOVERY_SEARCH_USES_PER_ARTIST", "2")
+)
+MAX_SEARCH_USES_CAP = int(os.environ.get("BENCHMARKER_MAX_SEARCH_USES_CAP", "20"))
 
 # Plafond de tokens de contenu ramené par web_fetch dans le contexte (coût).
 FETCH_MAX_CONTENT_TOKENS = int(
