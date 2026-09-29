@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from datetime import date as _date
 from typing import Callable, List, Optional
 
 import anthropic
@@ -11,8 +12,28 @@ from . import config
 from .discovery import discover
 from .extraction import extract_prices
 from .llm import build_client
-from .models import Concert, SearchCriteria
+from .models import Concert, PriceConfidence, SearchCriteria
 from .similar_artists import find_similar_artists
+
+_CONFIDENCE_RANK = {
+    PriceConfidence.COMPLETE: 3,
+    PriceConfidence.PARTIAL: 2,
+    PriceConfidence.FROM_PRICE: 1,
+    PriceConfidence.NONE: 0,
+}
+
+
+def _price_priority_key(concert: Concert) -> tuple:
+    """Trie les dates avec prix en premier (meilleure confiance d'abord),
+    puis par proximité avec aujourd'hui (passé récent ou futur proche avant
+    les dates plus éloignées dans le temps) — sans jamais rien supprimer."""
+    rank = _CONFIDENCE_RANK.get(concert.price_confidence, 0)
+    try:
+        d = _date.fromisoformat((concert.date or "")[:10])
+        recency = abs((d - _date.today()).days)
+    except ValueError:
+        recency = 10**6  # date absente/non parsable : reléguée en fin de groupe
+    return (-rank, recency)
 
 
 def resolve_target_artists(
@@ -105,6 +126,12 @@ def build_benchmark(
                 # Erreur ponctuelle sur cette date : on la note et on continue.
                 log(f"  ! date ignorée ({exc})")
                 concert.notes = _append_note(concert.notes, f"extraction échouée : {exc}")
+
+    # Fait ressortir en priorité les dates avec un vrai prix exploitable (rien
+    # n'est supprimé, juste réordonné) : à confiance égale, les dates les plus
+    # proches d'aujourd'hui (passées récentes ou futures proches) passent
+    # avant les plus éloignées dans le temps.
+    concerts.sort(key=_price_priority_key)
 
     return concerts
 

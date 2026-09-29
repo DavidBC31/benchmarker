@@ -6,6 +6,7 @@ puis on structure les résultats en objets `Concert` (sans prix à ce stade).
 
 from __future__ import annotations
 
+from datetime import date as _date
 from typing import Callable, List, Optional
 
 import anthropic
@@ -43,6 +44,20 @@ Sur les URLs (secondaire — ne consomme PAS de recherche dédiée pour ça, une
   confirmée (artiste + date + salle trouvés). Mieux vaut une date sans URL
   qu'une date manquante.
 
+Sur le choix des dates quand tu as plusieurs candidats pour un même artiste
+(la date exacte est secondaire pour ce benchmark, l'important est le prix) :
+- Une date déjà passée reste tout à fait valable si sa page billetterie est
+  probablement encore en ligne avec sa grille tarifaire (courant pour les
+  billetteries qui gardent l'historique) — privilégie les dates passées
+  RÉCENTES (quelques mois) à ce titre plutôt que de les écarter d'office.
+- Évite en priorité les dates très anciennes (plus d'un an) : leur page est
+  souvent dépubliée. Évite aussi les dates trop lointaines dans le futur si
+  la billetterie n'a probablement pas encore ouvert (prix non disponibles).
+- En clair : si tu dois choisir entre plusieurs dates plausibles pour un même
+  artiste, privilégie celles dont le prix a de bonnes chances d'être encore
+  accessible (en vente actuellement, ou terminées depuis peu) plutôt que des
+  dates très anciennes ou une mise en vente pas encore ouverte.
+
 RÈGLE CRITIQUE si ton budget de recherche s'épuise ou qu'un appel est refusé :
 - Ne t'excuse JAMAIS et ne demande JAMAIS à l'utilisateur de renvoyer sa demande.
 - Réponds TOUJOURS avec la liste des dates que tu as déjà identifiées à ce
@@ -74,6 +89,9 @@ def discover(
     sources_hint = ", ".join(config.PREFERRED_SOURCES_FR)
     secondary_hint = ", ".join(config.SECONDARY_PRICE_SOURCES_FR)
     user = (
+        f"Date d'aujourd'hui : {_date.today().isoformat()} (pour juger si une date "
+        "passée est récente ou trop ancienne, et si une date future a probablement "
+        "déjà sa billetterie ouverte).\n\n"
         "Trouve des dates de concerts correspondant aux critères suivants :\n\n"
         f"{criteria.to_prompt()}\n\n"
         f"Sources billetterie à privilégier (France) : {sources_hint}.\n"
