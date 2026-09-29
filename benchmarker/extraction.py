@@ -46,6 +46,18 @@ Réponds STRICTEMENT par :
   précisément à cet événement ;
 - ou le mot AUCUNE si tu ne trouves pas de fiche dédiée à cet événement précis."""
 
+_REFINE_ALTERNATE_SYSTEM = """Tu cherches une SOURCE ALTERNATIVE pour connaître le prix des
+billets d'un concert précis, car la billetterie officielle bloque l'accès automatisé.
+
+Privilégie, dans cet ordre : un agrégateur de billetterie (ex. jds.fr,
+infoconcert.com, wegow.com), un article de presse locale annonçant les tarifs,
+ou le site de l'organisateur/de la salle — PAS un doublon du domaine à éviter.
+
+Réponds STRICTEMENT par :
+- l'URL trouvée (et rien d'autre), si elle affiche un prix ou une fourchette de
+  prix pour cet événement précis ;
+- ou le mot AUCUNE si tu ne trouves rien de mieux."""
+
 
 def extract_prices(
     client: anthropic.Anthropic,
@@ -77,6 +89,20 @@ def extract_prices(
                 "Pas de fiche événement directe trouvée (URL générique ou absente).",
             )
             return concert
+
+    # Domaine connu pour bloquer l'accès automatisé (cf. HIGH_FRICTION_DOMAINS) :
+    # on cherche d'abord une source alternative (agrégateur/presse) plutôt que
+    # de perdre du temps sur une URL qui échouera très probablement. Si rien
+    # de mieux n'est trouvé, on continue quand même avec l'URL d'origine (le
+    # blocage n'est pas garanti à 100 %, mieux vaut tenter que renoncer).
+    elif _is_high_friction(concert.source_url):
+        alt = _refine_source_url(client, concert, settings, mode="alternate")
+        if alt:
+            concert.notes = _append_note(
+                concert.notes,
+                f"Source alternative privilégiée (domaine à forte friction anti-bot) : {alt}",
+            )
+            concert.source_url = alt
 
     result: Optional[PriceExtraction] = None
     used: Optional[str] = None
@@ -138,13 +164,35 @@ def _looks_like_generic_url(url: Optional[str]) -> bool:
     return urlsplit(url).path in ("", "/")
 
 
+def _is_high_friction(url: Optional[str]) -> bool:
+    """Détecte un domaine connu pour bloquer souvent l'accès automatisé."""
+    if not url:
+        return False
+    host = urlsplit(url).netloc.lower()
+    return any(host == d or host.endswith("." + d) for d in config.HIGH_FRICTION_DOMAINS)
+
+
 def _refine_source_url(
-    client: anthropic.Anthropic, concert: Concert, settings: "config.RunSettings"
+    client: anthropic.Anthropic,
+    concert: Concert,
+    settings: "config.RunSettings",
+    *,
+    mode: str = "direct",
 ) -> Optional[str]:
-    """Recherche ciblée d'une URL directe de billetterie (un seul appel, peu coûteux)."""
+    """Recherche ciblée d'une URL de billetterie (un seul appel, peu coûteux).
+
+    `mode="direct"` : cas URL manquante/générique, cherche la fiche directe.
+    `mode="alternate"` : cas domaine à forte friction anti-bot, cherche une
+    source de repli (agrégateur/presse) plutôt qu'un doublon du même domaine.
+    """
+    is_alternate = mode == "alternate"
     query = (
-        "Trouve l'URL directe de vente de billets pour ce concert précis :\n"
-        f"Artiste : {concert.artist}\n"
+        ("Trouve une source alternative pour le prix des billets de ce concert précis "
+         f"(la billetterie {urlsplit(concert.source_url).netloc if concert.source_url else '?'} "
+         "bloque l'accès automatisé) :\n"
+         if is_alternate else
+         "Trouve l'URL directe de vente de billets pour ce concert précis :\n")
+        + f"Artiste : {concert.artist}\n"
         f"Salle : {concert.venue or '?'}\n"
         f"Ville : {concert.city or '?'}\n"
         f"Date : {concert.date or '?'}\n"
@@ -154,7 +202,7 @@ def _refine_source_url(
     try:
         text = run_server_tool_loop(
             client,
-            system=_REFINE_URL_SYSTEM,
+            system=_REFINE_ALTERNATE_SYSTEM if is_alternate else _REFINE_URL_SYSTEM,
             user=query,
             tools=[web_search],
             model=settings.discovery_model,

@@ -72,10 +72,16 @@ def discover(
     settings = settings or config.resolve_settings()
     log = progress or (lambda _msg: None)
     sources_hint = ", ".join(config.PREFERRED_SOURCES_FR)
+    secondary_hint = ", ".join(config.SECONDARY_PRICE_SOURCES_FR)
     user = (
         "Trouve des dates de concerts correspondant aux critères suivants :\n\n"
         f"{criteria.to_prompt()}\n\n"
         f"Sources billetterie à privilégier (France) : {sources_hint}.\n"
+        f"Si un de ces résultats de recherche affiche déjà un prix indicatif "
+        f"(agrégateurs/presse comme {secondary_hint}), note-le même si tu as "
+        "aussi une URL de billetterie officielle — les grosses plateformes "
+        "bloquent souvent l'extraction automatisée du détail tarifaire, un "
+        "prix approximatif trouvé directement vaut mieux qu'aucun prix.\n"
         f"Vise environ {criteria.max_results} dates distinctes et pertinentes. "
         "Présente-les de façon claire (une date par bloc) avec les URLs trouvées."
     )

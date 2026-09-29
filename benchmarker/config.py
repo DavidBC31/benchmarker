@@ -66,6 +66,31 @@ PREFERRED_SOURCES_FR = [
     "weezevent.com",
 ]
 
+# Sources secondaires (agrégateurs / presse) qui affichent souvent un prix
+# indicatif en texte simple, sans grille détaillée par catégorie mais sans
+# les protections anti-bot des grosses billetteries — utiles en repli quand
+# la billetterie officielle bloque l'accès automatisé (cf. HIGH_FRICTION_DOMAINS).
+SECONDARY_PRICE_SOURCES_FR = [
+    "jds.fr",
+    "infoconcert.com",
+    "sortiraparis.com",
+    "wegow.com",
+]
+
+# Domaines de billetterie connus pour bloquer systématiquement (ou très
+# souvent) l'accès automatisé — aussi bien notre rendu Playwright que l'outil
+# serveur web_fetch (403, pages de détection de trafic, refus explicite).
+# Sur ces domaines, on tente d'abord une source alternative (cf.
+# SECONDARY_PRICE_SOURCES_FR) avant de perdre du temps sur l'URL d'origine.
+HIGH_FRICTION_DOMAINS = [
+    "ticketmaster.fr",
+    "ticketmaster.com",
+    "seetickets.com",
+    "fnacspectacles.com",
+    "leclercbilletterie.com",
+    "gimstour.com",
+]
+
 # --- Rendu navigateur (Playwright) -----------------------------------------
 # Stratégie d'extraction des prix :
 #   "playwright" : rendu navigateur local (GRATUIT) + 1 structuration bon marché.
