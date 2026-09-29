@@ -95,7 +95,9 @@ def extract_prices(
     # de perdre du temps sur une URL qui échouera très probablement. Si rien
     # de mieux n'est trouvé, on continue quand même avec l'URL d'origine (le
     # blocage n'est pas garanti à 100 %, mieux vaut tenter que renoncer).
-    elif _is_high_friction(concert.source_url):
+    # Vérifié après le bloc précédent (et pas en `elif`) pour couvrir aussi le
+    # cas d'une URL manquante affinée vers un domaine lui-même à forte friction.
+    if concert.source_url and _is_high_friction(concert.source_url):
         alt = _refine_source_url(client, concert, settings, mode="alternate")
         if alt:
             concert.notes = _append_note(

@@ -126,7 +126,9 @@ COOKIE_ACCEPT_SELECTORS = [
 # Sélecteurs courants de boutons qui révèlent la grille tarifaire (souvent
 # masquée derrière un widget de sélection tant qu'on n'a pas cliqué) : simple
 # navigation d'utilisateur normal, best-effort, sans jamais aller jusqu'au
-# paiement.
+# paiement. Inclut les variantes anglaises (Shotgun.live et d'autres
+# plateformes servent leurs pages en anglais par défaut) et le texte observé
+# sur Ticketmaster (« Sélectionnez une séance »).
 PRICE_REVEAL_SELECTORS = [
     "button:has-text('Voir les tarifs')",
     "button:has-text('Voir les prix')",
@@ -139,6 +141,15 @@ PRICE_REVEAL_SELECTORS = [
     "button:has-text(\"J'achète\")",
     "button:has-text('Réserver')",
     "a:has-text('Billets')",
+    "button:has-text('Sélectionner une séance')",
+    "a:has-text('Sélectionner une séance')",
+    "button:has-text('Choisir une séance')",
+    "button:has-text('Get tickets')",
+    "a:has-text('Get tickets')",
+    "button:has-text('Buy tickets')",
+    "a:has-text('Buy tickets')",
+    "button:has-text('Select tickets')",
+    "a:has-text('See tickets')",
 ]
 
 # --- Profils qualité / coût -------------------------------------------------
