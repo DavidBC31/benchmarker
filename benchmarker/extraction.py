@@ -104,7 +104,10 @@ def extract_prices(
             candidate = _structure(client, page_text, settings.structure_model)
             if _is_better(candidate, result):
                 result, used = candidate, "web_fetch"
-        elif not result:
+        else:
+            # Note systématiquement, même si Playwright avait déjà produit un
+            # résultat (insuffisant) — sinon un double échec (playwright +
+            # web_fetch) reste invisible dans les notes du concert.
             concert.notes = _append_note(concert.notes, f"web_fetch : {err}")
 
     # 3) Application du résultat

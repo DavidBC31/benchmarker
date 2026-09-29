@@ -126,6 +126,7 @@ class PageRenderer:
                     page.wait_for_load_state("networkidle", timeout=config.RENDER_IDLE_MS)
                 except Exception:
                     pass  # networkidle peut ne jamais arriver (trackers) — pas bloquant
+                self._reveal_price_widget(page)
                 text = page.inner_text("body")
                 return text[: self.text_cap]
             except Exception as exc:
@@ -147,6 +148,21 @@ class PageRenderer:
                 if el and el.is_visible():
                     el.click(timeout=1500)
                     page.wait_for_timeout(300)
+                    return
+            except Exception:
+                continue
+
+    def _reveal_price_widget(self, page) -> None:
+        """Clique un éventuel bouton « voir les tarifs / choisir mes places »
+        (best effort, simple navigation normale — on ne va jamais jusqu'au
+        paiement) : certains sites masquent la grille tarifaire tant qu'on n'a
+        pas engagé ce premier clic. Sans effet si aucun sélecteur ne matche."""
+        for selector in config.PRICE_REVEAL_SELECTORS:
+            try:
+                el = page.query_selector(selector)
+                if el and el.is_visible():
+                    el.click(timeout=1500)
+                    page.wait_for_timeout(800)
                     return
             except Exception:
                 continue

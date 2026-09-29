@@ -75,7 +75,7 @@ PREFERRED_SOURCES_FR = [
 FETCH_STRATEGY = os.environ.get("BENCHMARKER_FETCH_STRATEGY", "auto")
 
 RENDER_TIMEOUT_MS = int(os.environ.get("BENCHMARKER_RENDER_TIMEOUT_MS", "30000"))
-RENDER_IDLE_MS = int(os.environ.get("BENCHMARKER_RENDER_IDLE_MS", "4000"))
+RENDER_IDLE_MS = int(os.environ.get("BENCHMARKER_RENDER_IDLE_MS", "6000"))
 RENDER_TEXT_CAP = int(os.environ.get("BENCHMARKER_RENDER_TEXT_CAP", "12000"))
 # Tentatives sur erreur réseau/protocole (ex. ERR_HTTP2_PROTOCOL_ERROR) avant
 # d'abandonner — certains sites coupent la connexion de façon intermittente
@@ -96,6 +96,24 @@ COOKIE_ACCEPT_SELECTORS = [
     "button:has-text('Accepter')",
     "button:has-text('J\\'accepte')",
     "#accept",
+]
+
+# Sélecteurs courants de boutons qui révèlent la grille tarifaire (souvent
+# masquée derrière un widget de sélection tant qu'on n'a pas cliqué) : simple
+# navigation d'utilisateur normal, best-effort, sans jamais aller jusqu'au
+# paiement.
+PRICE_REVEAL_SELECTORS = [
+    "button:has-text('Voir les tarifs')",
+    "button:has-text('Voir les prix')",
+    "button:has-text('Choisir mes places')",
+    "button:has-text('Choisir ma place')",
+    "button:has-text('Voir les places')",
+    "a:has-text('Voir les tarifs')",
+    "a:has-text('Acheter')",
+    "button:has-text('Acheter')",
+    "button:has-text(\"J'achète\")",
+    "button:has-text('Réserver')",
+    "a:has-text('Billets')",
 ]
 
 # --- Profils qualité / coût -------------------------------------------------
