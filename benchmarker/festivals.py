@@ -131,8 +131,8 @@ _DISCOVERY_INSTRUCTION = """À partir des résultats de recherche ci-dessous, pr
 structurée des festivals trouvés. Pour chacun, renseigne au maximum : nom, édition (année),
 dates de début et de fin (ISO), commune, région, pays, cadre (urbain / periurbain / rural),
 jauge journalière, programmation dominante, têtes d'affiche (séparées par des virgules),
-nombre de soirs, artistes par soir, nombre total d'artistes, et l'URL de billetterie ou de la
-page tarifs si elle apparaît (laisse vide sinon — ne pas la deviner).
+nombre de soirs, artistes par soir, et l'URL de billetterie ou de la page tarifs si elle
+apparaît (laisse vide sinon — ne pas la deviner). Champ inconnu : chaîne vide ou 0.
 IMPORTANT : inclus TOUS les festivals confirmés, même sans URL. Ignore les doublons et les
 festivals hors critères."""
 

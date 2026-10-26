@@ -344,28 +344,29 @@ PricedItem = Union[Concert, Festival]
 
 
 class DiscoveredFestival(BaseModel):
-    """Schéma minimal (plat) renvoyé par la découverte de festivals.
+    """Schéma minimal renvoyé par la découverte de festivals.
 
-    Même contrainte que `DiscoveredConcert` : la sortie structurée a une limite
-    de complexité, donc uniquement des champs scalaires (têtes d'affiche en
-    texte séparé par des virgules), convertis en `Festival` côté code.
+    Tous les champs sont OBLIGATOIRES et de type simple (chaîne vide / 0 si
+    inconnu) : chaque champ optionnel compte comme une union « valeur ou
+    null » dans la limite de complexité de la sortie structurée, et 14 champs
+    optionnels la dépassaient (« Schema is too complex », constaté en
+    conditions réelles). Converti en `Festival` côté code (vide/0 -> None).
     """
 
     name: str = Field(description="Nom du festival.")
-    edition: Optional[str] = Field(default=None, description="Édition / année.")
-    date_start: Optional[str] = Field(default=None, description="Premier jour ISO YYYY-MM-DD.")
-    date_end: Optional[str] = Field(default=None, description="Dernier jour ISO YYYY-MM-DD.")
-    city: Optional[str] = Field(default=None, description="Commune.")
-    region: Optional[str] = Field(default=None, description="Région / département.")
-    country: Optional[str] = Field(default=None, description="Pays.")
-    setting: Optional[str] = Field(default=None, description="urbain, periurbain ou rural.")
-    capacity: Optional[int] = Field(default=None, description="Jauge journalière.")
-    genres: Optional[str] = Field(default=None, description="Programmation dominante.")
-    headliners: Optional[str] = Field(default=None, description="Têtes d'affiche, séparées par des virgules.")
-    nb_nights: Optional[int] = Field(default=None, description="Nombre de soirs / jours.")
-    artists_per_night: Optional[int] = Field(default=None, description="Artistes par soir.")
-    nb_artists_total: Optional[int] = Field(default=None, description="Nombre total d'artistes.")
-    source_url: Optional[str] = Field(default=None, description="URL billetterie / tarifs.")
+    edition: str = Field(description="Édition / année, ou chaîne vide si inconnue.")
+    date_start: str = Field(description="Premier jour ISO YYYY-MM-DD, ou chaîne vide.")
+    date_end: str = Field(description="Dernier jour ISO YYYY-MM-DD, ou chaîne vide.")
+    city: str = Field(description="Commune, ou chaîne vide.")
+    region: str = Field(description="Région / département, ou chaîne vide.")
+    country: str = Field(description="Pays, ou chaîne vide.")
+    setting: str = Field(description="urbain, periurbain ou rural ; chaîne vide si inconnu.")
+    capacity: int = Field(description="Jauge journalière ; 0 si inconnue.")
+    genres: str = Field(description="Programmation dominante, ou chaîne vide.")
+    headliners: str = Field(description="Têtes d'affiche séparées par des virgules, ou chaîne vide.")
+    nb_nights: int = Field(description="Nombre de soirs / jours ; 0 si inconnu.")
+    artists_per_night: int = Field(description="Artistes par soir ; 0 si inconnu.")
+    source_url: str = Field(description="URL billetterie / tarifs, ou chaîne vide.")
 
 
 class DiscoveredFestivalList(BaseModel):
@@ -388,25 +389,28 @@ def coerce_setting(value: Optional[str]) -> Setting:
 
 
 def discovered_to_festival(d: DiscoveredFestival) -> Festival:
-    headliners = [
-        h.strip() for h in re.split(r"[,;/]", d.headliners or "") if h.strip()
-    ]
+    def text(v: str) -> Optional[str]:
+        return v.strip() or None
+
+    def num(v: int) -> Optional[int]:
+        return v if v and v > 0 else None
+
+    headliners = [h.strip() for h in re.split(r"[,;/]", d.headliners) if h.strip()]
     return Festival(
         name=d.name,
-        edition=d.edition,
-        date_start=d.date_start,
-        date_end=d.date_end,
-        city=d.city,
-        region=d.region,
-        country=d.country,
+        edition=text(d.edition),
+        date_start=text(d.date_start),
+        date_end=text(d.date_end),
+        city=text(d.city),
+        region=text(d.region),
+        country=text(d.country),
         setting=coerce_setting(d.setting),
-        capacity=d.capacity,
-        genres=d.genres,
+        capacity=num(d.capacity),
+        genres=text(d.genres),
         headliners=headliners[:10],
-        nb_nights=d.nb_nights,
-        artists_per_night=d.artists_per_night,
-        nb_artists_total=d.nb_artists_total,
-        source_url=d.source_url,
+        nb_nights=num(d.nb_nights),
+        artists_per_night=num(d.artists_per_night),
+        source_url=text(d.source_url),
     )
 
 
