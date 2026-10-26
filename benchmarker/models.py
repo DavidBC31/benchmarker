@@ -6,8 +6,9 @@ Ces modèles servent à la fois de contrat pour la sortie structurée du LLM
 
 from __future__ import annotations
 
+import re
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -35,16 +36,37 @@ class PriceConfidence(str, Enum):
     NONE = "aucun_prix"            # rien de fiable trouvé
 
 
-class PriceCategory(BaseModel):
-    """Un tarif pour une catégorie de place donnée."""
+class Setting(str, Enum):
+    """Cadre d'implantation d'un festival (critère clé de comparabilité)."""
 
-    name: str = Field(description="Nom de la catégorie : Carré Or, Fosse, Cat. 1, etc.")
+    URBAIN = "urbain"
+    PERIURBAIN = "periurbain"
+    RURAL = "rural"
+    INCONNU = "inconnu"
+
+
+class PriceCategory(BaseModel):
+    """Un tarif pour une catégorie de place (concert) ou un type de pass (festival)."""
+
+    name: str = Field(
+        description="Nom de la catégorie : Carré Or, Fosse, Cat. 1… ou type de pass : Pass 1 jour, Pass 3 jours, VIP…"
+    )
     price: float = Field(description="Prix affiché pour cette catégorie.")
     currency: str = Field(default="EUR", description="Devise ISO (EUR, GBP, CHF…).")
     fees_included: Optional[bool] = Field(
         default=None,
         description="True si le prix inclut les frais de location, False sinon, None si inconnu.",
     )
+
+
+def prices_to_eur(prices: List[PriceCategory], fx: dict[str, float]) -> List[float]:
+    """Convertit une grille en EUR (les devises sans taux connu sont ignorées)."""
+    out: List[float] = []
+    for pc in prices:
+        rate = fx.get(pc.currency.upper())
+        if rate is not None:
+            out.append(round(pc.price * rate, 2))
+    return out
 
 
 class Concert(BaseModel):
@@ -84,15 +106,23 @@ class Concert(BaseModel):
         description="Infos utiles : early bird, dynamic pricing, guest, complet, etc.",
     )
 
-    # --- Helpers d'analyse --------------------------------------------------
+    # --- Helpers --------------------------------------------------------------
     def prices_eur(self, fx: dict[str, float]) -> List[float]:
         """Prix de toutes les catégories convertis en EUR."""
-        out: List[float] = []
-        for pc in self.prices:
-            rate = fx.get(pc.currency.upper())
-            if rate is not None:
-                out.append(round(pc.price * rate, 2))
-        return out
+        return prices_to_eur(self.prices, fx)
+
+    def search_label(self) -> str:
+        """Description de l'événement pour les recherches ciblées (URL, prix)."""
+        return (
+            f"Concert — Artiste : {self.artist} | Salle : {self.venue or '?'} | "
+            f"Ville : {self.city or '?'} | Date : {self.date or '?'}"
+        )
+
+    def short_label(self) -> str:
+        return f"{self.artist} — {self.venue or '?'}"
+
+    def sort_date(self) -> Optional[str]:
+        return self.date
 
 
 class ConcertList(BaseModel):
@@ -252,4 +282,208 @@ class SimilarArtistsResult(BaseModel):
     similar_artists: List[str] = Field(
         default_factory=list,
         description="Artistes comparables (même style, notoriété, taille de salle). Ne pas inclure l'artiste de référence.",
+    )
+
+
+# =============================================================================
+# Mode Festival
+# =============================================================================
+class Festival(BaseModel):
+    """Une édition de festival trouvée et (idéalement) tarifée."""
+
+    name: str = Field(description="Nom du festival.")
+    edition: Optional[str] = Field(default=None, description="Édition / année (ex. 2026).")
+    date_start: Optional[str] = Field(default=None, description="Premier jour (ISO YYYY-MM-DD).")
+    date_end: Optional[str] = Field(default=None, description="Dernier jour (ISO YYYY-MM-DD).")
+    city: Optional[str] = Field(default=None, description="Commune d'implantation.")
+    region: Optional[str] = Field(default=None, description="Région / département.")
+    country: Optional[str] = Field(default=None, description="Pays.")
+    setting: Setting = Field(default=Setting.INCONNU, description="Cadre : urbain, périurbain, rural.")
+    capacity: Optional[int] = Field(
+        default=None, description="Jauge JOURNALIÈRE (festivaliers par jour), pas la fréquentation cumulée."
+    )
+    genres: Optional[str] = Field(default=None, description="Programmation dominante (styles).")
+    headliners: List[str] = Field(default_factory=list, description="Têtes d'affiche de l'édition.")
+    nb_nights: Optional[int] = Field(default=None, description="Nombre de soirs / jours de festival.")
+    artists_per_night: Optional[int] = Field(default=None, description="Nombre moyen d'artistes par soir.")
+    nb_artists_total: Optional[int] = Field(default=None, description="Nombre total d'artistes programmés.")
+    source_url: Optional[str] = Field(
+        default=None, description="URL de la page billetterie / tarifs de référence."
+    )
+    prices: List[PriceCategory] = Field(
+        default_factory=list, description="Grille tarifaire par type de pass."
+    )
+    price_confidence: PriceConfidence = Field(
+        default=PriceConfidence.NONE, description="Qualité de la grille tarifaire récupérée."
+    )
+    priced_at: Optional[str] = Field(
+        default=None, description="Horodatage ISO (UTC) de la récupération des prix."
+    )
+    notes: Optional[str] = Field(
+        default=None, description="Infos utiles : early bird, sold out, phases de prix, etc."
+    )
+
+    def prices_eur(self, fx: dict[str, float]) -> List[float]:
+        return prices_to_eur(self.prices, fx)
+
+    def search_label(self) -> str:
+        dates = f"{self.date_start or '?'} → {self.date_end or '?'}"
+        return (
+            f"Festival — Nom : {self.name} | Édition : {self.edition or '?'} | "
+            f"Ville : {self.city or '?'} | Dates : {dates}"
+        )
+
+    def short_label(self) -> str:
+        return f"{self.name} {self.edition or ''}".strip()
+
+    def sort_date(self) -> Optional[str]:
+        return self.date_start
+
+
+PricedItem = Union[Concert, Festival]
+
+
+class DiscoveredFestival(BaseModel):
+    """Schéma minimal (plat) renvoyé par la découverte de festivals.
+
+    Même contrainte que `DiscoveredConcert` : la sortie structurée a une limite
+    de complexité, donc uniquement des champs scalaires (têtes d'affiche en
+    texte séparé par des virgules), convertis en `Festival` côté code.
+    """
+
+    name: str = Field(description="Nom du festival.")
+    edition: Optional[str] = Field(default=None, description="Édition / année.")
+    date_start: Optional[str] = Field(default=None, description="Premier jour ISO YYYY-MM-DD.")
+    date_end: Optional[str] = Field(default=None, description="Dernier jour ISO YYYY-MM-DD.")
+    city: Optional[str] = Field(default=None, description="Commune.")
+    region: Optional[str] = Field(default=None, description="Région / département.")
+    country: Optional[str] = Field(default=None, description="Pays.")
+    setting: Optional[str] = Field(default=None, description="urbain, periurbain ou rural.")
+    capacity: Optional[int] = Field(default=None, description="Jauge journalière.")
+    genres: Optional[str] = Field(default=None, description="Programmation dominante.")
+    headliners: Optional[str] = Field(default=None, description="Têtes d'affiche, séparées par des virgules.")
+    nb_nights: Optional[int] = Field(default=None, description="Nombre de soirs / jours.")
+    artists_per_night: Optional[int] = Field(default=None, description="Artistes par soir.")
+    nb_artists_total: Optional[int] = Field(default=None, description="Nombre total d'artistes.")
+    source_url: Optional[str] = Field(default=None, description="URL billetterie / tarifs.")
+
+
+class DiscoveredFestivalList(BaseModel):
+    festivals: List[DiscoveredFestival] = Field(default_factory=list)
+
+
+def coerce_setting(value: Optional[str]) -> Setting:
+    """Mappe une chaîne libre vers un `Setting` (best effort)."""
+    if not value:
+        return Setting.INCONNU
+    v = value.strip().lower().replace("é", "e").replace("-", "")
+    # "periurbain" contient "urbain" : à tester en premier.
+    if any(k in v for k in ("periurbain", "banlieue", "peri urbain")):
+        return Setting.PERIURBAIN
+    if any(k in v for k in ("rural", "campagne")):
+        return Setting.RURAL
+    if any(k in v for k in ("urbain", "ville", "centre")):
+        return Setting.URBAIN
+    return Setting.INCONNU
+
+
+def discovered_to_festival(d: DiscoveredFestival) -> Festival:
+    headliners = [
+        h.strip() for h in re.split(r"[,;/]", d.headliners or "") if h.strip()
+    ]
+    return Festival(
+        name=d.name,
+        edition=d.edition,
+        date_start=d.date_start,
+        date_end=d.date_end,
+        city=d.city,
+        region=d.region,
+        country=d.country,
+        setting=coerce_setting(d.setting),
+        capacity=d.capacity,
+        genres=d.genres,
+        headliners=headliners[:10],
+        nb_nights=d.nb_nights,
+        artists_per_night=d.artists_per_night,
+        nb_artists_total=d.nb_artists_total,
+        source_url=d.source_url,
+    )
+
+
+SETTING_LABELS = {"urbain": "urbain", "periurbain": "périurbain", "rural": "rural"}
+
+
+class FestivalCriteria(BaseModel):
+    """Critères de recherche propres aux festivals."""
+
+    reference_festival: Optional[str] = Field(
+        default=None,
+        description=(
+            "Festival de référence : l'outil recherche des festivals comparables "
+            "(jauge, cadre, programmation, format) pour orienter la découverte."
+        ),
+    )
+    target_festivals: List[str] = Field(
+        default_factory=list,
+        description="Liste résolue de festivals à rechercher (depuis reference_festival).",
+    )
+    genres: List[str] = Field(default_factory=list, description="Programmation ciblée (styles).")
+    location: Optional[str] = Field(default=None, description="Zone géographique.")
+    countries: List[str] = Field(default_factory=lambda: ["France"])
+    settings: List[str] = Field(
+        default_factory=list, description="Cadres acceptés : urbain, periurbain, rural (vide = tous)."
+    )
+    capacity_min: Optional[int] = Field(default=None, description="Jauge journalière minimale.")
+    capacity_max: Optional[int] = Field(default=None, description="Jauge journalière maximale.")
+    nights_min: Optional[int] = Field(default=None, description="Nombre de soirs minimal.")
+    nights_max: Optional[int] = Field(default=None, description="Nombre de soirs maximal.")
+    artists_per_night_min: Optional[int] = Field(default=None)
+    artists_per_night_max: Optional[int] = Field(default=None)
+    date_from: Optional[str] = Field(default=None, description="Début de période (ISO).")
+    date_to: Optional[str] = Field(default=None, description="Fin de période (ISO).")
+    max_results: int = Field(default=10, description="Nombre de festivals visés.")
+    extra: Optional[str] = Field(default=None, description="Contraintes libres additionnelles.")
+
+    def to_prompt(self) -> str:
+        parts: List[str] = []
+        if self.target_festivals:
+            parts.append(
+                f"- Festivals ciblés (rechercher CES festivals précisément) : {', '.join(self.target_festivals)}"
+            )
+        if self.genres:
+            parts.append(f"- Programmation : {', '.join(self.genres)}")
+        if self.location:
+            parts.append(f"- Zone géographique : {self.location}")
+        if self.countries:
+            parts.append(f"- Pays (France prioritaire) : {', '.join(self.countries)}")
+        if self.settings:
+            labels = [SETTING_LABELS.get(s, s) for s in self.settings]
+            parts.append(f"- Cadre d'implantation : {' ou '.join(labels)}")
+        for label, lo, hi, unit in (
+            ("Jauge journalière", self.capacity_min, self.capacity_max, "festivaliers/jour"),
+            ("Nombre de soirs", self.nights_min, self.nights_max, "soirs"),
+            ("Artistes par soir", self.artists_per_night_min, self.artists_per_night_max, "artistes"),
+        ):
+            if lo is not None or hi is not None:
+                parts.append(f"- {label} : entre {lo if lo is not None else '?'} et {hi if hi is not None else '?'} {unit}")
+        if self.date_from or self.date_to:
+            parts.append(f"- Période : du {self.date_from or '?'} au {self.date_to or '?'}")
+        parts.append(f"- Nombre de festivals visés : {self.max_results}")
+        if self.extra:
+            parts.append(f"- Contraintes additionnelles : {self.extra}")
+        return "\n".join(parts)
+
+
+class SimilarFestivalsResult(BaseModel):
+    """Sortie structurée de la résolution de festivals comparables."""
+
+    reference_festival: str = Field(description="Festival de référence fourni par l'utilisateur.")
+    inferred_profile: Optional[str] = Field(
+        default=None,
+        description="Profil du festival de référence en une ligne : cadre, jauge/jour, programmation, nb de soirs.",
+    )
+    inferred_genre: Optional[str] = Field(default=None, description="Programmation dominante.")
+    similar_festivals: List[str] = Field(
+        default_factory=list,
+        description="Festivals comparables (jauge, cadre, programmation, format). Ne pas inclure la référence.",
     )

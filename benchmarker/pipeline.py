@@ -11,8 +11,16 @@ import anthropic
 from . import config
 from .discovery import discover
 from .extraction import extract_prices
+from .festivals import discover_festivals, find_similar_festivals
 from .llm import build_client
-from .models import Concert, PriceConfidence, SearchCriteria
+from .models import (
+    Concert,
+    Festival,
+    FestivalCriteria,
+    PriceConfidence,
+    PricedItem,
+    SearchCriteria,
+)
 from .similar_artists import find_similar_artists
 
 _CONFIDENCE_RANK = {
@@ -23,13 +31,13 @@ _CONFIDENCE_RANK = {
 }
 
 
-def _price_priority_key(concert: Concert) -> tuple:
-    """Trie les dates avec prix en premier (meilleure confiance d'abord),
+def _price_priority_key(item: PricedItem) -> tuple:
+    """Trie les événements avec prix en premier (meilleure confiance d'abord),
     puis par proximité avec aujourd'hui (passé récent ou futur proche avant
     les dates plus éloignées dans le temps) — sans jamais rien supprimer."""
-    rank = _CONFIDENCE_RANK.get(concert.price_confidence, 0)
+    rank = _CONFIDENCE_RANK.get(item.price_confidence, 0)
     try:
-        d = _date.fromisoformat((concert.date or "")[:10])
+        d = _date.fromisoformat((item.sort_date() or "")[:10])
         recency = abs((d - _date.today()).days)
     except ValueError:
         recency = 10**6  # date absente/non parsable : reléguée en fin de groupe
@@ -110,30 +118,97 @@ def build_benchmark(
     if not with_prices:
         return concerts
 
+    _extract_all(client, concerts, settings, log)
+    return concerts
+
+
+def resolve_target_festivals(
+    client: anthropic.Anthropic,
+    criteria: FestivalCriteria,
+    settings: config.RunSettings,
+    log: Callable[[str], None],
+) -> FestivalCriteria:
+    """Résout `reference_festival` en `target_festivals` (+ programmation
+    déduite si absente). Idempotente, comme `resolve_target_artists`."""
+    if not criteria.reference_festival or criteria.target_festivals:
+        return criteria
+    log(f"Recherche de festivals comparables à « {criteria.reference_festival} »…")
+    similar = find_similar_festivals(client, criteria.reference_festival, settings=settings)
+    festivals = [criteria.reference_festival] + similar.similar_festivals
+    resolved = criteria.model_copy(
+        update={
+            "target_festivals": festivals,
+            "genres": criteria.genres or ([similar.inferred_genre] if similar.inferred_genre else []),
+        }
+    )
+    if similar.inferred_profile:
+        log(f"Profil de référence : {similar.inferred_profile}")
+    log(f"Festivals retenus : {', '.join(festivals)}")
+    return resolved
+
+
+def build_festival_benchmark(
+    criteria: FestivalCriteria,
+    *,
+    client: Optional[anthropic.Anthropic] = None,
+    with_prices: bool = True,
+    profile: Optional[str] = None,
+    strategy: Optional[str] = None,
+    progress: Optional[Callable[[str], None]] = None,
+) -> List[Festival]:
+    """Pendant festival de `build_benchmark` : festivals comparables (si
+    festival de référence), découverte, puis extraction des grilles de pass."""
+    client = client or build_client()
+    settings = config.resolve_settings(profile, strategy)
+    log = progress or (lambda _msg: None)
+
+    criteria = resolve_target_festivals(client, criteria, settings, log)
+
+    log(f"Découverte des festivals… (profil : {profile or config.DEFAULT_PROFILE})")
+    festivals = discover_festivals(client, criteria, settings, progress=log)
+    if festivals:
+        log(f"{len(festivals)} festival(s) trouvé(s).")
+    else:
+        log(
+            "0 festival trouvé. Voir les lignes ci-dessus pour la cause ; sinon, "
+            "essaie des critères moins restrictifs ou le profil 'equilibre'."
+        )
+        return festivals
+
+    if with_prices:
+        _extract_all(client, festivals, settings, log)
+    return festivals
+
+
+def _extract_all(
+    client: anthropic.Anthropic,
+    items: List[PricedItem],
+    settings: config.RunSettings,
+    log: Callable[[str], None],
+) -> None:
+    """Extrait les prix de chaque événement (in place), puis les réordonne.
+
+    Un unique `PageRenderer` est partagé sur tous les événements. Une erreur
+    fatale (crédits, auth) stoppe la boucle en conservant l'acquis ; une
+    erreur ponctuelle est notée sur l'événement concerné.
+    """
     with _renderer_for(settings.fetch_strategy, log) as renderer:
-        for i, concert in enumerate(concerts, start=1):
-            label = f"{concert.artist} — {concert.venue or '?'}"
-            log(f"[{i}/{len(concerts)}] Extraction prix ({settings.fetch_strategy}) : {label}")
+        for i, item in enumerate(items, start=1):
+            log(f"[{i}/{len(items)}] Extraction prix ({settings.fetch_strategy}) : {item.short_label()}")
             try:
-                extract_prices(client, concert, settings=settings, renderer=renderer)
+                extract_prices(client, item, settings=settings, renderer=renderer)
             except Exception as exc:  # noqa: BLE001
                 if _is_fatal(exc):
-                    # Crédits épuisés / auth invalide : inutile de continuer, mais
-                    # on conserve tout ce qui a déjà été collecté.
                     log(f"Arrêt : erreur fatale ({exc}). "
-                        f"{i - 1}/{len(concerts)} date(s) traitée(s), résultats conservés.")
+                        f"{i - 1}/{len(items)} événement(s) traité(s), résultats conservés.")
                     break
-                # Erreur ponctuelle sur cette date : on la note et on continue.
-                log(f"  ! date ignorée ({exc})")
-                concert.notes = _append_note(concert.notes, f"extraction échouée : {exc}")
+                log(f"  ! événement ignoré ({exc})")
+                item.notes = _append_note(item.notes, f"extraction échouée : {exc}")
 
-    # Fait ressortir en priorité les dates avec un vrai prix exploitable (rien
-    # n'est supprimé, juste réordonné) : à confiance égale, les dates les plus
-    # proches d'aujourd'hui (passées récentes ou futures proches) passent
-    # avant les plus éloignées dans le temps.
-    concerts.sort(key=_price_priority_key)
-
-    return concerts
+    # Fait ressortir en priorité les événements avec un vrai prix exploitable
+    # (rien n'est supprimé, juste réordonné) : à confiance égale, les plus
+    # proches d'aujourd'hui passent avant les plus éloignés dans le temps.
+    items.sort(key=_price_priority_key)
 
 
 def _is_fatal(exc: Exception) -> bool:

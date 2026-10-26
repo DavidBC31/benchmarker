@@ -217,6 +217,7 @@
   td { border-bottom: 1px solid rgba(210, 210, 215, 0.5); }
   tr:last-child td { border-bottom: none; }
   td.wrap { white-space: normal; max-width: 320px; }
+  td.prices { min-width: 230px; }
   .chip-capacity { color: var(--apple-teal); font-weight: 600; }
 
   .conf { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 9999px; white-space: nowrap; }
@@ -247,6 +248,14 @@
 
   .icon { width: 14px; height: 14px; flex-shrink: 0; }
 
+  .mode-pill { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 9999px; }
+  .m-artist { background: rgba(20, 80, 226, 0.10); color: var(--apple-blue); }
+  .m-festival { background: rgba(175, 82, 222, 0.12); color: var(--apple-purple); }
+  .chip-setting { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 9999px; background: rgba(90, 200, 250, 0.16); color: #0b6e99; }
+  .check-group { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; min-height: 44px; }
+  .field-hint { font-weight: 400; }
+  #run-area { display: none; flex-direction: column; gap: 20px; margin-top: 20px; }
+
   @media (max-width: 720px) {
     nav.pillbar { flex-wrap: wrap; border-radius: 24px; padding: 10px; }
     .nav-left { order: 1; flex: 1 1 100%; margin-bottom: 6px; }
@@ -258,13 +267,15 @@
 </head>
 <body>
 
+
 <nav class="pillbar">
   <div class="nav-left">
     <div class="mark">BC</div>
     <div class="title">Prévisionnel Billetterie<small>Benchmark tarifaire</small></div>
   </div>
   <div class="nav-center">
-    <button class="nav-tab active" data-view="nouveau">Nouveau</button>
+    <button class="nav-tab active" data-view="artiste">Artiste</button>
+    <button class="nav-tab" data-view="festival">Festival</button>
     <button class="nav-tab" data-view="historique">Historique</button>
   </div>
   <div class="nav-right">
@@ -279,17 +290,16 @@
 
 <main>
 
-  <!-- ============================= VUE : NOUVEAU ============================= -->
-  <section class="view active" id="view-nouveau">
+  {% if not has_key %}
+  <div class="warnkey" style="margin-bottom:20px">⚠️ Aucune clé API détectée côté serveur (ANTHROPIC_API_KEY). Définissez-la dans l'environnement du service avant de lancer un benchmark.</div>
+  {% endif %}
 
-    {% if not has_key %}
-    <div class="warnkey">⚠️ Aucune clé API détectée côté serveur (ANTHROPIC_API_KEY). Définissez-la dans l'environnement du service avant de lancer un benchmark.</div>
-    {% endif %}
-
+  <!-- ============================= VUE : ARTISTE ============================= -->
+  <section class="view active" id="view-artiste">
     <div class="glass-card">
-      <h2>Critères de recherche</h2>
+      <h2>Benchmark par artiste</h2>
       <div style="margin-bottom:14px">
-        <label>Artiste de référence <span style="font-weight:400">(optionnel)</span></label>
+        <label>Artiste de référence <span class="field-hint">(optionnel)</span></label>
         <input id="reference_artist" placeholder="ex. PLK">
         <p class="meta" style="margin-top:6px">Si renseigné, l'outil recherche des artistes comparables (même style, notoriété, taille de salle) et oriente la découverte sur cette liste précise, en complément ou à la place du style ci-dessous.</p>
       </div>
@@ -320,35 +330,63 @@
       <div style="margin-top:14px"><label>Contraintes additionnelles</label>
         <textarea id="extra" rows="2" placeholder="Zéniths et Arenas, hors petits clubs…"></textarea></div>
       <div class="row">
-        <button class="cta" id="run">Lancer le benchmark</button>
+        <button class="cta run-btn" id="run">Lancer le benchmark</button>
         <label class="checkbox-row"><input type="checkbox" id="with_prices" checked> Extraire les prix</label>
       </div>
     </div>
+  </section>
 
-    <div class="glass-card" id="progress-panel" style="display:none">
-      <h2>Progression <span id="status-badge" class="badge b-running">en cours…</span></h2>
-      <div id="log"></div>
-    </div>
-
-    <div class="glass-card" id="results-panel" style="display:none">
-      <h2>Résultats</h2>
-      <div class="row" id="downloads" style="margin-top:0"></div>
-      <h3>Synthèse</h3>
-      <div class="tiles" id="tiles"></div>
-      <div id="cat-table"></div>
-      <h3>Détail des dates</h3>
-      <div class="tblwrap"><table id="rows-table"></table></div>
-    </div>
-
-    <div class="glass-card" id="reco-panel" style="display:none">
-      <h2>Préconisation tarifaire</h2>
-      <div class="grid">
-        <div><label>Artiste (libellé)</label><input id="r_artist" placeholder="Nom artiste"></div>
-        <div><label>Style</label><input id="r_genre" placeholder="rap"></div>
-        <div><label>Jauge de la salle</label><input id="r_capacity" type="number" placeholder="7000"></div>
+  <!-- ============================= VUE : FESTIVAL ============================= -->
+  <section class="view" id="view-festival">
+    <div class="glass-card">
+      <h2>Benchmark par festival</h2>
+      <div style="margin-bottom:14px">
+        <label>Festival de référence <span class="field-hint">(optionnel)</span></label>
+        <input id="f_reference_festival" placeholder="ex. Les Vieilles Charrues">
+        <p class="meta" style="margin-top:6px">Si renseigné, l'outil établit son profil (jauge journalière, cadre, programmation, format) et recherche des festivals comparables, en complément ou à la place des critères ci-dessous.</p>
       </div>
-      <div class="row"><button class="cta" id="reco-btn">Préconiser des tarifs</button></div>
-      <div id="reco-out" style="margin-top:16px"></div>
+      <div class="grid">
+        <div><label>Programmation (styles)</label><input id="f_genres" placeholder="rap, électro, pop"></div>
+        <div><label>Zone géographique</label><input id="f_location" placeholder="France" value="France"></div>
+        <div><label>Jauge / jour min</label><input id="f_capacity_min" type="number" placeholder="10000"></div>
+        <div><label>Jauge / jour max</label><input id="f_capacity_max" type="number" placeholder="40000"></div>
+        <div><label>Nombre de soirs min</label><input id="f_nights_min" type="number" placeholder="2"></div>
+        <div><label>Nombre de soirs max</label><input id="f_nights_max" type="number" placeholder="4"></div>
+        <div><label>Artistes / soir min</label><input id="f_apn_min" type="number" placeholder="6"></div>
+        <div><label>Artistes / soir max</label><input id="f_apn_max" type="number" placeholder="15"></div>
+        <div><label>Période début</label><input id="f_date_from" type="date"></div>
+        <div><label>Période fin</label><input id="f_date_to" type="date"></div>
+        <div><label>Nombre de festivals</label><input id="f_max_results" type="number" value="10"></div>
+        <div><label>Qualité / coût</label>
+          <select id="f_profile">
+            <option value="eco" {% if default_profile=='eco' %}selected{% endif %}>Économe</option>
+            <option value="equilibre" {% if default_profile=='equilibre' %}selected{% endif %}>Équilibré</option>
+            <option value="max" {% if default_profile=='max' %}selected{% endif %}>Max qualité</option>
+          </select>
+        </div>
+        <div><label>Stratégie prix</label>
+          <select id="f_strategy">
+            <option value="">(profil par défaut)</option>
+            <option value="auto">auto</option>
+            <option value="playwright">playwright seul</option>
+            <option value="web_fetch">web_fetch seul</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <label>Cadre d'implantation <span class="field-hint">(aucun coché = tous)</span></label>
+        <div class="check-group">
+          <label class="checkbox-row"><input type="checkbox" name="f_setting" value="urbain"> Urbain</label>
+          <label class="checkbox-row"><input type="checkbox" name="f_setting" value="periurbain"> Périurbain</label>
+          <label class="checkbox-row"><input type="checkbox" name="f_setting" value="rural"> Rural</label>
+        </div>
+      </div>
+      <div style="margin-top:14px"><label>Contraintes additionnelles</label>
+        <textarea id="f_extra" rows="2" placeholder="Avec camping, plein air, têtes d'affiche internationales…"></textarea></div>
+      <div class="row">
+        <button class="cta run-btn" id="f_run">Lancer le benchmark</button>
+        <label class="checkbox-row"><input type="checkbox" id="f_with_prices" checked> Extraire les prix</label>
+      </div>
     </div>
   </section>
 
@@ -368,11 +406,59 @@
     </div>
   </section>
 
+  <!-- ================ ZONE PARTAGÉE : progression, résultats, préconisation ================ -->
+  <section id="run-area">
+    <div class="glass-card" id="progress-panel" style="display:none">
+      <h2>Progression <span id="status-badge" class="badge b-running">en cours…</span></h2>
+      <div id="log"></div>
+    </div>
+
+    <div class="glass-card" id="results-panel" style="display:none">
+      <h2>Résultats</h2>
+      <div class="row" id="downloads" style="margin-top:0"></div>
+      <h3>Synthèse</h3>
+      <div class="tiles" id="tiles"></div>
+      <div id="stats-tables"></div>
+      <h3 id="detail-title">Détail</h3>
+      <div class="tblwrap"><table id="rows-table"></table></div>
+    </div>
+
+    <div class="glass-card" id="reco-panel" style="display:none">
+      <h2>Préconisation tarifaire</h2>
+      <div class="grid" id="reco-artist-fields">
+        <div><label>Artiste (libellé)</label><input id="r_artist" placeholder="Nom artiste"></div>
+        <div><label>Style</label><input id="r_genre" placeholder="rap"></div>
+        <div><label>Jauge de la salle</label><input id="r_capacity" type="number" placeholder="7000"></div>
+      </div>
+      <div class="grid" id="reco-festival-fields" style="display:none">
+        <div><label>Festival (libellé)</label><input id="rf_name" placeholder="Nom du festival"></div>
+        <div><label>Programmation</label><input id="rf_genre" placeholder="rap"></div>
+        <div><label>Jauge / jour</label><input id="rf_capacity" type="number" placeholder="25000"></div>
+        <div><label>Nombre de soirs</label><input id="rf_nights" type="number" placeholder="3"></div>
+        <div><label>Artistes / soir</label><input id="rf_apn" type="number" placeholder="10"></div>
+        <div><label>Cadre</label>
+          <select id="rf_setting">
+            <option value="">(indifférent)</option>
+            <option value="urbain">Urbain</option>
+            <option value="periurbain">Périurbain</option>
+            <option value="rural">Rural</option>
+          </select>
+        </div>
+      </div>
+      <div class="row"><button class="cta" id="reco-btn">Préconiser des tarifs</button></div>
+      <div id="reco-out" style="margin-top:16px"></div>
+    </div>
+  </section>
+
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let currentJob = null, poll = null;
+const VIEW_OF = {artist: "artiste", festival: "festival"};
+const SETTING_LABEL = {urbain: "Urbain", periurbain: "Périurbain", rural: "Rural", inconnu: "—"};
+// Mode ("artist"/"festival") du run affiché dans la zone partagée : elle n'est
+// visible que dans l'onglet correspondant.
+let currentJob = null, poll = null, displayedMode = null;
 
 // --- Navigation entre vues -------------------------------------------------
 document.querySelectorAll('.nav-tab').forEach(btn => {
@@ -381,12 +467,13 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
 function switchView(name) {
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('active', b.dataset.view === name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
+  $("run-area").style.display = (displayedMode && VIEW_OF[displayedMode] === name) ? "flex" : "none";
   if (name === 'historique') loadHistory();
 }
 
 // --- Lancement d'un run ------------------------------------------------------
-$("run").addEventListener("click", async () => {
-  const payload = {
+function artistPayload() {
+  return {
     reference_artist: $("reference_artist").value,
     genres: $("genres").value, location: $("location").value,
     capacity_min: $("capacity_min").value, capacity_max: $("capacity_max").value,
@@ -395,16 +482,41 @@ $("run").addEventListener("click", async () => {
     profile: $("profile").value, strategy: $("strategy").value,
     with_prices: $("with_prices").checked,
   };
-  $("run").disabled = true;
+}
+function festivalPayload() {
+  return {
+    reference_festival: $("f_reference_festival").value,
+    genres: $("f_genres").value, location: $("f_location").value,
+    settings: [...document.querySelectorAll('input[name="f_setting"]:checked')].map(c => c.value),
+    capacity_min: $("f_capacity_min").value, capacity_max: $("f_capacity_max").value,
+    nights_min: $("f_nights_min").value, nights_max: $("f_nights_max").value,
+    artists_per_night_min: $("f_apn_min").value, artists_per_night_max: $("f_apn_max").value,
+    date_from: $("f_date_from").value, date_to: $("f_date_to").value,
+    max_results: $("f_max_results").value, extra: $("f_extra").value,
+    profile: $("f_profile").value, strategy: $("f_strategy").value,
+    with_prices: $("f_with_prices").checked,
+  };
+}
+$("run").addEventListener("click", () => startRun("artist", artistPayload()));
+$("f_run").addEventListener("click", () => startRun("festival", festivalPayload()));
+
+function setRunning(running) { document.querySelectorAll(".run-btn").forEach(b => b.disabled = running); }
+
+async function startRun(mode, payload) {
+  displayedMode = mode;
+  setRunning(true);
+  $("run-area").style.display = "flex";
   $("progress-panel").style.display = "";
   $("results-panel").style.display = "none";
   $("reco-panel").style.display = "none";
   $("log").textContent = ""; setBadge("running", "en cours…");
-  const res = await fetch("/api/run", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)});
+  const res = await fetch("/api/run", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({...payload, mode})});
+  if (!res.ok) { setBadge("error", "erreur"); $("log").textContent = "Impossible de lancer le benchmark."; setRunning(false); return; }
   const j = await res.json();
   currentJob = j.job_id;
   poll = setInterval(checkStatus, 1500);
-});
+}
 
 async function checkStatus() {
   const res = await fetch(`/api/status/${currentJob}`);
@@ -412,7 +524,7 @@ async function checkStatus() {
   $("log").textContent = (j.log || []).join("\n");
   $("log").scrollTop = $("log").scrollHeight;
   if (j.status === "done" || j.status === "error") {
-    clearInterval(poll); $("run").disabled = false;
+    clearInterval(poll); setRunning(false);
     setBadge(j.status, j.status === "done" ? "terminé" : "erreur");
     if (j.status === "done") loadResults(currentJob);
   }
@@ -425,60 +537,123 @@ async function loadResults(jobId) {
   if (!res.ok) { alert("Impossible de charger ce résultat."); return; }
   const j = await res.json();
   currentJob = jobId;
-  renderResults(j.summary, j.rows);
+  displayedMode = j.mode || "artist";
+  renderResults(j.summary, j.rows, displayedMode);
   $("results-panel").style.display = "";
   $("reco-panel").style.display = "";
+  $("reco-artist-fields").style.display = displayedMode === "festival" ? "none" : "";
+  $("reco-festival-fields").style.display = displayedMode === "festival" ? "" : "none";
+  $("reco-out").innerHTML = "";
   $("downloads").innerHTML =
     `<a class="glass-pill" href="/download/${jobId}.csv">⬇ CSV</a>` +
     `<a class="glass-pill" href="/download/${jobId}.json">⬇ JSON</a>` +
     `<a class="glass-pill" href="/download/${jobId}_synthese.md">⬇ Synthèse</a>`;
+  const activeView = document.querySelector('.view.active').id.replace('view-', '');
+  $("run-area").style.display = VIEW_OF[displayedMode] === activeView ? "flex" : "none";
 }
 
-function renderResults(s, rows) {
+const dash = "<span style='color:var(--apple-text-secondary)'>—</span>";
+function tiles(list) {
+  $("tiles").innerHTML = list.map(([k,v]) => `<div class="tile"><div class="v">${v ?? "–"}</div><div class="k">${k}</div></div>`).join("");
+}
+function statsTable(title, firstCol, obj) {
+  const entries = Object.entries(obj || {}).filter(([,v]) => v && v.count);
+  if (!entries.length) return "";
+  return `<h3>${title}</h3><div class="tblwrap"><table><tr><th>${firstCol}</th><th>N</th><th>Min</th><th>Moy.</th><th>Méd.</th><th>Max</th></tr>` +
+    entries.map(([c,v]) => `<tr><td>${esc(c)}</td><td>${v.count}</td><td>${v.min}</td><td>${v.mean}</td><td>${v.median}</td><td>${v.max}</td></tr>`).join("") +
+    `</table></div>`;
+}
+function confCell(r) { return `<td><span class="conf c-${esc(r.price_confidence)}">${esc(r.price_confidence)}</span></td>`; }
+function noteCell(r) { return `<td class="wrap meta" title="${esc(r.notes)}">${esc(r.notes)}</td>`; }
+
+function renderResults(s, rows, mode) {
   const g = s.global || {};
-  const tiles = [
-    ["Dates", s.dates_trouvees], ["Tarifs", s.tarifs_collectes],
-    ["Min €", g.min ?? "–"], ["Moyenne €", g.mean ?? "–"],
-    ["Médiane €", g.median ?? "–"], ["Max €", g.max ?? "–"],
-  ];
-  $("tiles").innerHTML = tiles.map(([k,v]) => `<div class="tile"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
-
-  const cats = s.par_categorie || {};
-  let ct = "";
-  if (Object.keys(cats).length) {
-    ct = `<div class="tblwrap"><table><tr><th>Catégorie</th><th>N</th><th>Min</th><th>Moy.</th><th>Méd.</th><th>Max</th></tr>` +
-      Object.entries(cats).map(([c,v]) => v.count ?
-        `<tr><td>${esc(c)}</td><td>${v.count}</td><td>${v.min}</td><td>${v.mean}</td><td>${v.median}</td><td>${v.max}</td></tr>` : ""
-      ).join("") + `</table></div>`;
+  if (mode === "festival") {
+    const pj = s.prix_par_jour || {}, pa = s.prix_par_artiste || {};
+    tiles([["Festivals", s.festivals_trouves], ["Tarifs", s.tarifs_collectes],
+           ["Prix / jour méd. €", pj.median], ["Prix / artiste méd. €", pa.median],
+           ["Min €", g.min], ["Max €", g.max]]);
+    const settingLabels = Object.fromEntries(Object.entries(s.par_cadre || {}).map(([k,v]) => [SETTING_LABEL[k] || k, v]));
+    $("stats-tables").innerHTML =
+      statsTable("Par type de pass (EUR)", "Type de pass", s.par_categorie) +
+      statsTable("Prix par jour selon le cadre (EUR)", "Cadre", settingLabels) +
+      statsTable("Prix par jour selon la jauge (EUR)", "Jauge", s.par_jauge);
+    $("detail-title").textContent = "Détail des festivals";
+    let html = `<tr><th>Festival</th><th>Édition</th><th>Dates</th><th>Ville</th><th>Cadre</th><th>Jauge/jour</th><th>Soirs</th><th>Artistes/soir</th><th>Programmation</th><th>Têtes d'affiche</th><th>Prix</th><th>Confiance</th><th>Note</th></tr>`;
+    html += (rows||[]).map(r => `<tr>
+      <td>${esc(r.festival)}</td><td>${esc(r.edition)}</td>
+      <td>${esc(r.date_start)}${r.date_end && r.date_end !== r.date_start ? " → " + esc(r.date_end) : ""}</td>
+      <td>${esc(r.city)}</td>
+      <td>${r.setting && r.setting !== "inconnu" ? `<span class="chip-setting">${esc(SETTING_LABEL[r.setting] || r.setting)}</span>` : dash}</td>
+      <td>${r.capacity ? `<span class="chip-capacity">${r.capacity}</span>` : ""}</td>
+      <td>${r.nb_nights ?? ""}</td><td>${r.artists_per_night ?? ""}</td>
+      <td class="wrap">${esc(r.genres)}</td><td class="wrap">${esc(r.headliners)}</td>
+      <td class="wrap prices">${esc(r.prices) || dash}</td>${confCell(r)}${noteCell(r)}</tr>`).join("");
+    $("rows-table").innerHTML = html;
+    return;
   }
-  $("cat-table").innerHTML = ct;
-
+  tiles([["Dates", s.dates_trouvees], ["Tarifs", s.tarifs_collectes],
+         ["Min €", g.min], ["Moyenne €", g.mean], ["Médiane €", g.median], ["Max €", g.max]]);
+  $("stats-tables").innerHTML = statsTable("Par catégorie (EUR)", "Catégorie", s.par_categorie);
+  $("detail-title").textContent = "Détail des dates";
   let html = `<tr><th>Artiste</th><th>Date</th><th>Lieu</th><th>Ville</th><th>Jauge</th><th>Prix</th><th>Confiance</th><th>Note</th></tr>`;
   html += (rows||[]).map(r => `<tr>
-    <td>${esc(r.artist)}</td><td>${esc(r.date)||""}</td><td class="wrap">${esc(r.venue)||""}</td>
-    <td>${esc(r.city)||""}</td><td>${r.capacity ? `<span class="chip-capacity">${r.capacity}</span>` : ""}</td>
-    <td class="wrap">${esc(r.prices)||"<span style='color:var(--apple-text-secondary)'>—</span>"}</td>
-    <td><span class="conf c-${r.price_confidence}">${r.price_confidence}</span></td>
-    <td class="wrap meta" title="${esc(r.notes)||""}">${esc(r.notes)||""}</td></tr>`).join("");
+    <td>${esc(r.artist)}</td><td>${esc(r.date)}</td><td class="wrap">${esc(r.venue)}</td>
+    <td>${esc(r.city)}</td><td>${r.capacity ? `<span class="chip-capacity">${r.capacity}</span>` : ""}</td>
+    <td class="wrap">${esc(r.prices) || dash}</td>${confCell(r)}${noteCell(r)}</tr>`).join("");
   $("rows-table").innerHTML = html;
 }
 
+// --- Préconisation -------------------------------------------------------------
 $("reco-btn").addEventListener("click", async () => {
+  const body = displayedMode === "festival"
+    ? {name: $("rf_name").value, genre: $("rf_genre").value, capacity: $("rf_capacity").value,
+       nb_nights: $("rf_nights").value, artists_per_night: $("rf_apn").value, setting: $("rf_setting").value}
+    : {artist: $("r_artist").value, genre: $("r_genre").value, capacity: $("r_capacity").value};
   const res = await fetch(`/api/recommend/${currentJob}`, {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({artist:$("r_artist").value, genre:$("r_genre").value, capacity:$("r_capacity").value})});
+    body: JSON.stringify(body)});
   const j = await res.json();
   const r = j.reco || {};
-  if (r.error) { $("reco-out").innerHTML = `<p class="meta">${r.error}</p>`; return; }
+  if (j.error || r.error) { $("reco-out").innerHTML = `<p class="meta">${esc(j.error || r.error)}</p>`; return; }
   const per = r.reco_par_categorie || {};
-  let html = `<p class="meta">Filtres : ${(r.filtres_appliques||[]).join(", ")} · échantillon : ${r.taille_echantillon}</p>`;
-  html += `<div class="tblwrap" style="margin-top:10px"><table><tr><th>Catégorie</th><th>N</th><th>Fourchette (EUR)</th><th>Médiane</th></tr>` +
+  const firstCol = displayedMode === "festival" ? "Type de pass" : "Catégorie";
+  const sampleLabel = displayedMode === "festival" ? "festivals comparables" : "échantillon";
+  let html = `<p class="meta">Filtres : ${esc((r.filtres_appliques||[]).join(", "))} · ${sampleLabel} : ${r.taille_echantillon}</p>`;
+  html += `<div class="tblwrap" style="margin-top:10px"><table><tr><th>${firstCol}</th><th>N</th><th>Fourchette (EUR)</th><th>Médiane</th></tr>` +
     Object.entries(per).map(([c,v]) => `<tr><td>${esc(c)}</td><td>${v.n}</td><td>${v.fourchette_recommandee[0]} – ${v.fourchette_recommandee[1]}</td><td>${v.median}</td></tr>`).join("") +
     `</table></div>`;
+  if (displayedMode === "festival") {
+    const extras = [["prix_par_jour", "Prix par jour de référence"],
+                    ["pass_tous_soirs_estime", "Pass tous soirs (estimation)"],
+                    ["pass_1_jour_selon_plateau", "Pass 1 jour selon le plateau (estimation)"]];
+    const tilesHtml = extras.filter(([k]) => r[k]).map(([k, label]) => {
+      const v = r[k];
+      return `<div class="tile"><div class="v">${v.median} €</div><div class="k">${label}<br>${v.fourchette_recommandee[0]} – ${v.fourchette_recommandee[1]} €${v.base ? `<br>${esc(v.base)}` : ""}</div></div>`;
+    }).join("");
+    if (tilesHtml) html += `<div class="tiles" style="margin-top:14px">${tilesHtml}</div>`;
+  }
   $("reco-out").innerHTML = html;
 });
 
 // --- Historique ----------------------------------------------------------
 $("refresh-history").addEventListener("click", loadHistory);
+
+function critLabelOf(r) {
+  const c = r.criteria || {};
+  if (r.mode === "festival") {
+    return [
+      c.reference_festival ? `≈ ${c.reference_festival}` : null,
+      c.genres && c.genres.length ? c.genres.join(', ') : null,
+      c.settings && c.settings.length ? c.settings.map(s => SETTING_LABEL[s] || s).join('/') : null,
+      c.location,
+    ].filter(Boolean).join(' · ') || 'Sans critère de programmation/zone';
+  }
+  return [
+    c.reference_artist ? `≈ ${c.reference_artist}` : null,
+    c.genres && c.genres.length ? c.genres.join(', ') : null,
+    c.location,
+  ].filter(Boolean).join(' · ') || 'Sans critère de style/zone';
+}
 
 async function loadHistory() {
   const res = await fetch("/api/history");
@@ -491,12 +666,7 @@ async function loadHistory() {
   const byJobId = {};
   $("history-list").innerHTML = runs.map(r => {
     byJobId[r.job_id] = r;
-    const c = r.criteria || {};
-    const critLabel = [
-      c.reference_artist ? `≈ ${c.reference_artist}` : null,
-      c.genres && c.genres.length ? c.genres.join(', ') : null,
-      c.location,
-    ].filter(Boolean).join(' · ') || 'Sans critère de style/zone';
+    const isFest = r.mode === "festival";
     const dateLabel = new Date(r.created_at).toLocaleString('fr-FR', {dateStyle:'medium', timeStyle:'short'});
     const s = r.summary || {};
     const statusBadge = r.status === 'done' ? `<span class="badge b-done">terminé</span>`
@@ -505,14 +675,16 @@ async function loadHistory() {
     // job_id est un hex UUID généré serveur (uuid4().hex) : sûr à poser tel
     // quel comme attribut data-*. Aucune autre donnée (texte libre saisi par
     // l'utilisateur) n'est jamais injectée dans un attribut ou un onclick —
-    // seuls escapeHtml()/textContent ou des gestionnaires JS y accèdent.
+    // seuls esc()/textContent ou des gestionnaires JS y accèdent.
     return `<div class="hist-row">
       <div class="hist-main">
-        <div class="hist-crit">${esc(critLabel)}</div>
-        <div class="hist-sub">${dateLabel} · <span class="profile-pill">${esc(r.profile||'eco')}</span></div>
+        <div class="hist-crit">${esc(critLabelOf(r))}</div>
+        <div class="hist-sub">${dateLabel} ·
+          <span class="mode-pill ${isFest ? 'm-festival' : 'm-artist'}">${isFest ? 'Festival' : 'Artiste'}</span>
+          <span class="profile-pill">${esc(r.profile||'eco')}</span></div>
       </div>
       <div class="hist-stats">
-        <div><b>${s.dates_trouvees ?? '–'}</b> dates</div>
+        <div><b>${(isFest ? s.festivals_trouves : s.dates_trouvees) ?? '–'}</b> ${isFest ? 'festivals' : 'dates'}</div>
         <div><b>${s.tarifs_collectes ?? '–'}</b> tarifs</div>
         ${statusBadge}
       </div>
@@ -524,37 +696,60 @@ async function loadHistory() {
   }).join("");
 
   document.querySelectorAll('#history-list [data-action="view"]').forEach(btn => {
-    btn.addEventListener('click', () => viewHistoryRun(btn.dataset.job));
+    btn.addEventListener('click', () => viewHistoryRun(byJobId[btn.dataset.job]));
   });
   document.querySelectorAll('#history-list [data-action="reload"]').forEach(btn => {
     btn.addEventListener('click', () => reloadCriteria(byJobId[btn.dataset.job]));
   });
 }
 
-function viewHistoryRun(jobId) {
-  switchView('nouveau');
-  loadResults(jobId);
-  setTimeout(() => $("results-panel").scrollIntoView({behavior:"smooth", block:"start"}), 150);
+async function viewHistoryRun(r) {
+  displayedMode = r.mode || "artist";
+  switchView(VIEW_OF[displayedMode]);
+  // Masque les résultats précédents pendant le chargement (pas de données périmées affichées).
+  ["progress-panel", "results-panel", "reco-panel"].forEach(id => $(id).style.display = "none");
+  await loadResults(r.job_id);
+  $("results-panel").scrollIntoView({behavior:"smooth", block:"start"});
 }
 
 function reloadCriteria(r) {
   const c = r.criteria || {};
-  $("reference_artist").value = c.reference_artist || "";
-  $("genres").value = (c.genres || []).join(", ");
-  $("location").value = c.location || "";
-  $("capacity_min").value = c.capacity_min ?? "";
-  $("capacity_max").value = c.capacity_max ?? "";
-  $("date_from").value = c.date_from || "";
-  $("date_to").value = c.date_to || "";
-  $("max_results").value = c.max_results ?? 10;
-  $("extra").value = c.extra || "";
-  $("profile").value = r.profile || "eco";
-  $("strategy").value = r.strategy || "";
-  switchView('nouveau');
+  if (r.mode === "festival") {
+    $("f_reference_festival").value = c.reference_festival || "";
+    $("f_genres").value = (c.genres || []).join(", ");
+    $("f_location").value = c.location || "";
+    document.querySelectorAll('input[name="f_setting"]').forEach(cb => cb.checked = (c.settings || []).includes(cb.value));
+    $("f_capacity_min").value = c.capacity_min ?? "";
+    $("f_capacity_max").value = c.capacity_max ?? "";
+    $("f_nights_min").value = c.nights_min ?? "";
+    $("f_nights_max").value = c.nights_max ?? "";
+    $("f_apn_min").value = c.artists_per_night_min ?? "";
+    $("f_apn_max").value = c.artists_per_night_max ?? "";
+    $("f_date_from").value = c.date_from || "";
+    $("f_date_to").value = c.date_to || "";
+    $("f_max_results").value = c.max_results ?? 10;
+    $("f_extra").value = c.extra || "";
+    $("f_profile").value = r.profile || "eco";
+    $("f_strategy").value = r.strategy || "";
+    switchView('festival');
+  } else {
+    $("reference_artist").value = c.reference_artist || "";
+    $("genres").value = (c.genres || []).join(", ");
+    $("location").value = c.location || "";
+    $("capacity_min").value = c.capacity_min ?? "";
+    $("capacity_max").value = c.capacity_max ?? "";
+    $("date_from").value = c.date_from || "";
+    $("date_to").value = c.date_to || "";
+    $("max_results").value = c.max_results ?? 10;
+    $("extra").value = c.extra || "";
+    $("profile").value = r.profile || "eco";
+    $("strategy").value = r.strategy || "";
+    switchView('artiste');
+  }
   window.scrollTo({top:0, behavior:"smooth"});
 }
 
-function esc(s) { return (s==null)?"":String(s).replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function esc(s) { return (s==null)?"":String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 </script>
 </body>
 </html>

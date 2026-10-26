@@ -36,15 +36,15 @@ WEB_FETCH_TOOL = {"type": "web_fetch_20260209", "name": "web_fetch"}
 MAX_SEARCH_USES = int(os.environ.get("BENCHMARKER_MAX_SEARCH_USES", "6"))
 MAX_FETCH_USES = int(os.environ.get("BENCHMARKER_MAX_FETCH_USES", "2"))
 
-# Avec un artiste de référence, la découverte cible une LISTE d'artistes
-# précis (répartition explicite du budget de recherche entre eux, cf.
+# Avec un artiste (ou festival) de référence, la découverte cible une LISTE
+# précise (répartition explicite du budget de recherche entre les cibles, cf.
 # discovery.py) : un budget fixe de 6 devient vite insuffisant (ex. 7
 # artistes = moins d'une recherche chacun), ce qui a provoqué en conditions
 # réelles un épuisement précoce du budget suivi d'un abandon prématuré du
-# modèle. Le budget de découverte croît donc avec le nombre d'artistes
-# ciblés, jusqu'à ce plafond (coût plus élevé, accepté explicitement).
-DISCOVERY_SEARCH_USES_PER_ARTIST = int(
-    os.environ.get("BENCHMARKER_DISCOVERY_SEARCH_USES_PER_ARTIST", "2")
+# modèle. Le budget de découverte croît donc avec le nombre de cibles,
+# jusqu'à ce plafond (coût plus élevé, accepté explicitement).
+DISCOVERY_SEARCH_USES_PER_TARGET = int(
+    os.environ.get("BENCHMARKER_DISCOVERY_SEARCH_USES_PER_TARGET", "2")
 )
 MAX_SEARCH_USES_CAP = int(os.environ.get("BENCHMARKER_MAX_SEARCH_USES_CAP", "20"))
 
@@ -76,6 +76,10 @@ URL_REFINE_MAX_USES = int(os.environ.get("BENCHMARKER_URL_REFINE_MAX_USES", "4")
 SIMILAR_ARTISTS_MAX_USES = int(os.environ.get("BENCHMARKER_SIMILAR_ARTISTS_MAX_USES", "4"))
 SIMILAR_ARTISTS_COUNT = int(os.environ.get("BENCHMARKER_SIMILAR_ARTISTS_COUNT", "6"))
 
+# Idem pour le mode Festival (festival de référence -> festivals comparables).
+SIMILAR_FESTIVALS_MAX_USES = int(os.environ.get("BENCHMARKER_SIMILAR_FESTIVALS_MAX_USES", "4"))
+SIMILAR_FESTIVALS_COUNT = int(os.environ.get("BENCHMARKER_SIMILAR_FESTIVALS_COUNT", "6"))
+
 # Nombre max de continuations pause_turn dans une boucle d'outils serveur.
 MAX_CONTINUATIONS = 6
 
@@ -90,6 +94,20 @@ PREFERRED_SOURCES_FR = [
     "billetreduc.com",
     "digitick.com",
     "weezevent.com",
+]
+
+# Billetteries couramment utilisées par les festivals (indice pour la
+# découverte ; le site officiel du festival reste la source n°1 des grilles
+# de pass, souvent publiées en clair sur une page « billetterie / tarifs »).
+FESTIVAL_TICKETING_SOURCES = [
+    "site officiel du festival",
+    "weezevent.com",
+    "shotgun.live",
+    "billetweb.fr",
+    "seetickets.com",
+    "ticketmaster.fr",
+    "dice.fm",
+    "festicket.com",
 ]
 
 # Sources secondaires (agrégateurs / presse) qui affichent souvent un prix

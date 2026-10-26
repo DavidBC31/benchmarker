@@ -104,27 +104,7 @@ def discover(
         "Présente-les de façon claire (une date par bloc) avec les URLs trouvées."
     )
 
-    web_search = dict(config.WEB_SEARCH_TOOL)
-    n_targets = len(criteria.target_artists)
-    if n_targets:
-        # Budget proportionnel au nombre d'artistes ciblés (répartition
-        # explicite demandée dans le prompt) plutôt qu'un plafond fixe pensé
-        # pour une recherche par style générique — sinon le budget s'épuise
-        # avant d'avoir couvert chaque artiste, et le modèle abandonne trop tôt.
-        web_search["max_uses"] = min(
-            config.MAX_SEARCH_USES_CAP,
-            max(settings.max_search_uses, n_targets * config.DISCOVERY_SEARCH_USES_PER_ARTIST),
-        )
-        log(f"  budget de recherche découverte : {web_search['max_uses']} "
-            f"(pour {n_targets} artiste(s) ciblé(s))")
-    else:
-        web_search["max_uses"] = settings.max_search_uses
-
-    # Le timeout par défaut (config.LLM_REQUEST_TIMEOUT_S) suppose un budget de
-    # recherche standard ; avec un budget élargi (artistes ciblés, jusqu'à
-    # MAX_SEARCH_USES_CAP), on l'allonge proportionnellement pour ne pas couper
-    # un appel qui a légitimement besoin de plus de temps.
-    timeout = config.LLM_REQUEST_TIMEOUT_S * max(1, web_search["max_uses"] / config.MAX_SEARCH_USES)
+    web_search, timeout = search_budget(settings, len(criteria.target_artists), "artiste(s)", log)
 
     findings = run_server_tool_loop(
         client,
@@ -156,3 +136,32 @@ def discover(
         log(f"  ! structuration : 0 date extraite. Aperçu des résultats de recherche : {preview}…")
         return []
     return [discovered_to_concert(d) for d in parsed.concerts]
+
+
+def search_budget(
+    settings: config.RunSettings,
+    n_targets: int,
+    target_label: str,
+    log: Callable[[str], None],
+) -> tuple[dict, float]:
+    """Outil web_search configuré + timeout pour une découverte.
+
+    Avec des cibles explicites (artistes ou festivals comparables), le budget
+    croît avec leur nombre (répartition explicite demandée dans le prompt)
+    plutôt qu'un plafond fixe pensé pour une recherche générique — sinon il
+    s'épuise avant d'avoir couvert chaque cible et le modèle abandonne trop
+    tôt. Le timeout suit proportionnellement pour ne pas couper un appel qui
+    a légitimement besoin de plus de temps.
+    """
+    web_search = dict(config.WEB_SEARCH_TOOL)
+    if n_targets:
+        web_search["max_uses"] = min(
+            config.MAX_SEARCH_USES_CAP,
+            max(settings.max_search_uses, n_targets * config.DISCOVERY_SEARCH_USES_PER_TARGET),
+        )
+        log(f"  budget de recherche découverte : {web_search['max_uses']} "
+            f"(pour {n_targets} {target_label} ciblé(s))")
+    else:
+        web_search["max_uses"] = settings.max_search_uses
+    timeout = config.LLM_REQUEST_TIMEOUT_S * max(1, web_search["max_uses"] / config.MAX_SEARCH_USES)
+    return web_search, timeout

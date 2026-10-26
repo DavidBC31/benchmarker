@@ -1,4 +1,4 @@
-"""Phase 2 — Extraction de la grille tarifaire par date.
+"""Phase 2 — Extraction de la grille tarifaire d'un événement (concert ou festival).
 
 Trois stratégies de récupération de la page billetterie :
   - "web_fetch"  : le LLM récupère la page via l'outil serveur web_fetch ;
@@ -21,25 +21,35 @@ import anthropic
 
 from . import config
 from .llm import parse_structured, run_server_tool_loop
-from .models import Concert, PriceConfidence, PriceExtraction
+from .models import PriceConfidence, PriceExtraction, PricedItem
 
 _FETCH_SYSTEM = """Tu es un analyste billetterie. On te donne l'URL d'une page de vente
-de billets pour un concert. Récupère la page et restitue son contenu tarifaire.
+de billets pour un concert ou un festival. Récupère la page et restitue son contenu tarifaire.
 
 Règles :
 - Récupère le contenu de l'URL fournie avec l'outil web_fetch.
-- Liste chaque catégorie de place avec son prix (Carré Or, Fosse, Cat. 1/2/3, Placement libre…).
+- Concert : liste chaque catégorie de place avec son prix (Carré Or, Fosse, Cat. 1/2/3, Placement libre…).
+- Festival : liste chaque type de pass avec son prix (pass 1 jour / par jour nommé, 2 jours,
+  3 jours, intégral, VIP…) ainsi que les options payantes (camping, parking…).
 - Indique si les frais de location sont inclus quand l'information est disponible.
 - N'invente aucun prix. Reste strictement factuel sur ce que la page affiche."""
 
 _STRUCTURE_INSTRUCTION = """À partir du contenu de page ci-dessous, extrais la grille tarifaire
 structurée : liste des catégories avec prix et devise, un niveau de confiance
 (grille_complete / grille_partielle / prix_a_partir_de / aucun_prix), et une note
-éventuelle (early bird, dynamic pricing, complet, etc.). N'invente aucun prix."""
+éventuelle (early bird, dynamic pricing, complet, etc.). N'invente aucun prix.
+
+Pour un FESTIVAL : une catégorie par type de pass, en gardant explicitement la
+durée dans le nom (ex. « Pass 1 jour », « Pass Samedi », « Pass 2 jours »,
+« Pass 3 jours », « Pass intégral », « Pass VIP 3 jours »). Les options vendues
+à part (camping, parking, navette…) sont des catégories séparées dont le nom
+commence par « Option : ». Si plusieurs phases de prix existent (early, normal,
+sur place), garde le tarif actuellement en vente et mentionne les autres en note."""
 
 _REFINE_URL_SYSTEM = """Tu cherches l'URL DIRECTE de la fiche de vente de billets pour un
-concert précis (pas la page d'accueil du site, pas un portail d'événements, pas une page
-de recherche ou de liste).
+événement précis — concert, ou édition précise d'un festival (pas la page d'accueil d'une
+billetterie, pas un portail d'événements, pas une page de recherche ou de liste). Pour un
+festival, la page billetterie / tarifs de son site officiel convient parfaitement.
 
 Réponds STRICTEMENT par :
 - l'URL trouvée (et rien d'autre), si tu es raisonnablement sûr qu'elle correspond
@@ -47,11 +57,14 @@ Réponds STRICTEMENT par :
 - ou le mot AUCUNE si tu ne trouves pas de fiche dédiée à cet événement précis."""
 
 _REFINE_ALTERNATE_SYSTEM = """Tu cherches une SOURCE ALTERNATIVE pour connaître le prix des
-billets d'un concert précis, car la billetterie officielle bloque l'accès automatisé.
+billets d'un événement précis (concert ou festival), car la billetterie bloque l'accès
+automatisé.
 
-Privilégie, dans cet ordre : un agrégateur de billetterie (ex. jds.fr,
-infoconcert.com, wegow.com), un article de presse locale annonçant les tarifs,
-ou le site de l'organisateur/de la salle — PAS un doublon du domaine à éviter.
+Privilégie, dans cet ordre : pour un festival, la page billetterie / tarifs de son
+site officiel (les grilles de pass y sont souvent en clair) ; un agrégateur de
+billetterie (ex. jds.fr, infoconcert.com, wegow.com) ; un article de presse locale
+annonçant les tarifs ; le site de l'organisateur/de la salle — PAS un doublon du
+domaine à éviter.
 
 Réponds STRICTEMENT par :
 - l'URL trouvée (et rien d'autre), si elle affiche un prix ou une fourchette de
@@ -61,34 +74,34 @@ Réponds STRICTEMENT par :
 
 def extract_prices(
     client: anthropic.Anthropic,
-    concert: Concert,
+    item: PricedItem,
     *,
     settings: "config.RunSettings | None" = None,
     renderer=None,
-) -> Concert:
-    """Enrichit un `Concert` avec sa grille tarifaire (in place et retourné).
+) -> PricedItem:
+    """Enrichit un `Concert` ou un `Festival` avec sa grille tarifaire (in place et retourné).
 
     `settings` : réglages du run (modèles, stratégie, budgets). Défaut : profil courant.
     `renderer` : instance `PageRenderer` réutilisable (optionnel, pour Playwright).
     """
     settings = settings or config.resolve_settings()
     strategy = settings.fetch_strategy
-    concert.priced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    item.priced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     # URL absente ou visiblement générique (page d'accueil/portail) : on tente
     # une recherche ciblée pour retrouver la fiche directe avant d'abandonner.
-    if _looks_like_generic_url(concert.source_url):
-        refined = _refine_source_url(client, concert, settings)
+    if _looks_like_generic_url(item.source_url):
+        refined = _refine_source_url(client, item, settings)
         if refined:
-            concert.notes = _append_note(concert.notes, f"URL affinée : {refined}")
-            concert.source_url = refined
+            item.notes = _append_note(item.notes, f"URL affinée : {refined}")
+            item.source_url = refined
         else:
-            concert.price_confidence = PriceConfidence.NONE
-            concert.notes = _append_note(
-                concert.notes,
+            item.price_confidence = PriceConfidence.NONE
+            item.notes = _append_note(
+                item.notes,
                 "Pas de fiche événement directe trouvée (URL générique ou absente).",
             )
-            return concert
+            return item
 
     # Domaine connu pour bloquer l'accès automatisé (cf. HIGH_FRICTION_DOMAINS) :
     # on cherche d'abord une source alternative (agrégateur/presse) plutôt que
@@ -97,14 +110,14 @@ def extract_prices(
     # blocage n'est pas garanti à 100 %, mieux vaut tenter que renoncer).
     # Vérifié après le bloc précédent (et pas en `elif`) pour couvrir aussi le
     # cas d'une URL manquante affinée vers un domaine lui-même à forte friction.
-    if concert.source_url and _is_high_friction(concert.source_url):
-        alt = _refine_source_url(client, concert, settings, mode="alternate")
+    if item.source_url and _is_high_friction(item.source_url):
+        alt = _refine_source_url(client, item, settings, mode="alternate")
         if alt:
-            concert.notes = _append_note(
-                concert.notes,
+            item.notes = _append_note(
+                item.notes,
                 f"Source alternative privilégiée (domaine à forte friction anti-bot) : {alt}",
             )
-            concert.source_url = alt
+            item.source_url = alt
 
     result: Optional[PriceExtraction] = None
     used: Optional[str] = None
@@ -112,14 +125,14 @@ def extract_prices(
     # 1) Playwright d'abord (rendu local GRATUIT) pour "playwright" et "auto".
     #    Seule la structuration coûte, et une seule fois.
     if strategy in ("playwright", "auto"):
-        rendered, err = _gather_via_playwright(concert.source_url, renderer)
+        rendered, err = _gather_via_playwright(item.source_url, renderer)
         if rendered:
             result = _structure(client, rendered, settings.structure_model)
             used = "playwright"
         else:
             # Notée même en mode "auto" (avant : silencieuse) pour pouvoir
             # diagnostiquer un souci de rendu sans devoir forcer la stratégie.
-            concert.notes = _append_note(concert.notes, f"playwright : {err}")
+            item.notes = _append_note(item.notes, f"playwright : {err}")
 
     # 2) web_fetch (LLM, coûteux) : stratégie dédiée, ou fallback "auto"
     #    UNIQUEMENT si le rendu gratuit n'a pas donné de grille suffisante.
@@ -127,7 +140,7 @@ def extract_prices(
         strategy == "auto" and not _is_sufficient(result)
     )
     if need_web_fetch:
-        page_text, err = _gather_via_web_fetch(client, concert, settings)
+        page_text, err = _gather_via_web_fetch(client, item, settings)
         if page_text:
             candidate = _structure(client, page_text, settings.structure_model)
             if _is_better(candidate, result):
@@ -135,21 +148,21 @@ def extract_prices(
         else:
             # Note systématiquement, même si Playwright avait déjà produit un
             # résultat (insuffisant) — sinon un double échec (playwright +
-            # web_fetch) reste invisible dans les notes du concert.
-            concert.notes = _append_note(concert.notes, f"web_fetch : {err}")
+            # web_fetch) reste invisible dans les notes de l'événement.
+            item.notes = _append_note(item.notes, f"web_fetch : {err}")
 
     # 3) Application du résultat
     if result is None:
-        concert.price_confidence = PriceConfidence.NONE
-        return concert
+        item.price_confidence = PriceConfidence.NONE
+        return item
 
-    concert.prices = result.prices
-    concert.price_confidence = result.price_confidence
+    item.prices = result.prices
+    item.price_confidence = result.price_confidence
     if used:
-        concert.notes = _append_note(concert.notes, f"source prix : {used}")
+        item.notes = _append_note(item.notes, f"source prix : {used}")
     if result.notes:
-        concert.notes = _append_note(concert.notes, result.notes)
-    return concert
+        item.notes = _append_note(item.notes, result.notes)
+    return item
 
 
 # --- qualité de l'URL --------------------------------------------------------
@@ -176,7 +189,7 @@ def _is_high_friction(url: Optional[str]) -> bool:
 
 def _refine_source_url(
     client: anthropic.Anthropic,
-    concert: Concert,
+    item: PricedItem,
     settings: "config.RunSettings",
     *,
     mode: str = "direct",
@@ -189,15 +202,12 @@ def _refine_source_url(
     """
     is_alternate = mode == "alternate"
     query = (
-        ("Trouve une source alternative pour le prix des billets de ce concert précis "
-         f"(la billetterie {urlsplit(concert.source_url).netloc if concert.source_url else '?'} "
+        ("Trouve une source alternative pour le prix des billets de cet événement précis "
+         f"(la billetterie {urlsplit(item.source_url).netloc if item.source_url else '?'} "
          "bloque l'accès automatisé) :\n"
          if is_alternate else
-         "Trouve l'URL directe de vente de billets pour ce concert précis :\n")
-        + f"Artiste : {concert.artist}\n"
-        f"Salle : {concert.venue or '?'}\n"
-        f"Ville : {concert.city or '?'}\n"
-        f"Date : {concert.date or '?'}\n"
+         "Trouve l'URL directe de vente de billets pour cet événement précis :\n")
+        + item.search_label()
     )
     web_search = dict(config.WEB_SEARCH_TOOL)
     web_search["max_uses"] = config.URL_REFINE_MAX_USES
@@ -229,15 +239,14 @@ def _refine_source_url(
 
 # --- collecte de la page ----------------------------------------------------
 def _gather_via_web_fetch(
-    client: anthropic.Anthropic, concert: Concert, settings: "config.RunSettings"
+    client: anthropic.Anthropic, item: PricedItem, settings: "config.RunSettings"
 ) -> tuple[Optional[str], Optional[str]]:
     """Récupère la page via l'outil serveur web_fetch. Renvoie (texte, erreur)."""
     user = (
-        f"Voici la page billetterie pour {concert.artist}"
-        f"{f' à {concert.venue}' if concert.venue else ''}"
-        f"{f' le {concert.date}' if concert.date else ''}.\n"
-        f"URL : {concert.source_url}\n\n"
-        "Récupère la page et donne-moi la grille tarifaire complète par catégorie."
+        f"Voici la page billetterie pour : {item.search_label()}\n"
+        f"URL : {item.source_url}\n\n"
+        "Récupère la page et donne-moi la grille tarifaire complète par catégorie "
+        "(ou par type de pass pour un festival)."
     )
     web_fetch = dict(config.WEB_FETCH_TOOL)
     web_fetch["max_uses"] = settings.max_fetch_uses

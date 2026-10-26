@@ -2,9 +2,13 @@
 
 Conçue pour un hébergement auto-hébergé derrière Cloudflare :
 - servie par un serveur WSGI de production (waitress) ;
-- protégée par un mot de passe partagé (BENCHMARKER_AUTH_TOKEN) ;
+- protégeable par un mot de passe partagé (BENCHMARKER_AUTH_TOKEN), en plus
+  ou à la place de Cloudflare Access ;
 - la clé API Anthropic reste côté serveur (variable d'environnement), jamais
   saisie dans le navigateur.
+
+Deux modes de benchmark : « artist » (dates de concerts comparables) et
+« festival » (éditions de festivals comparables, grilles de pass).
 
 Les benchmarks tournent en tâche de fond ; l'UI interroge la progression.
 Chaque run écrit un fichier de métadonnées (`_meta.json`) en plus des exports,
@@ -22,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from flask import (
     Flask,
@@ -37,9 +41,14 @@ from flask import (
 
 from .. import analysis, config
 from ..llm import build_client
-from ..models import Concert, SearchCriteria
-from ..pipeline import build_benchmark, resolve_target_artists
-from ..recommend import recommend
+from ..models import SETTING_LABELS, Concert, Festival, FestivalCriteria, SearchCriteria
+from ..pipeline import (
+    build_benchmark,
+    build_festival_benchmark,
+    resolve_target_artists,
+    resolve_target_festivals,
+)
+from ..recommend import recommend, recommend_festival
 
 # Ancré à la racine du projet (et non au cwd du process, qui varie selon la
 # façon dont le service est lancé — launchd, terminal, etc. — et a causé des
@@ -47,14 +56,20 @@ from ..recommend import recommend
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 OUT_DIR = Path(os.environ.get("BENCHMARKER_OUT_DIR") or (_PROJECT_ROOT / "out"))
 
+ARTIST = "artist"
+FESTIVAL = "festival"
+
+AnyCriteria = Union[SearchCriteria, FestivalCriteria]
+
 
 # --- État des jobs en mémoire ----------------------------------------------
 @dataclass
 class Job:
     id: str
+    mode: str = ARTIST
     status: str = "running"  # running | done | error
     log: list = field(default_factory=list)
-    concerts: list = field(default_factory=list)
+    items: list = field(default_factory=list)  # Concert ou Festival selon le mode
     summary: dict = field(default_factory=dict)
     error: Optional[str] = None
 
@@ -66,6 +81,9 @@ _JOBS_LOCK = threading.Lock()
 # --- Application ------------------------------------------------------------
 def create_app() -> Flask:
     app = Flask(__name__)
+    # Conserve l'ordre des clés construit côté analyse (types de pass, tranches
+    # de jauge…) : par défaut Flask trie les clés JSON alphabétiquement.
+    app.json.sort_keys = False
     app.secret_key = os.environ.get("BENCHMARKER_SECRET_KEY") or os.urandom(24).hex()
     auth_token = os.environ.get("BENCHMARKER_AUTH_TOKEN")
 
@@ -120,16 +138,20 @@ def create_app() -> Flask:
     @login_required
     def api_run():
         data = request.get_json(force=True) or {}
-        criteria = _criteria_from_payload(data)
+        mode = FESTIVAL if data.get("mode") == FESTIVAL else ARTIST
+        criteria = (
+            _festival_criteria_from_payload(data) if mode == FESTIVAL
+            else _criteria_from_payload(data)
+        )
         profile = data.get("profile") or None
         strategy = data.get("strategy") or None
         with_prices = bool(data.get("with_prices", True))
 
-        job = Job(id=uuid.uuid4().hex[:12])
+        job = Job(id=uuid.uuid4().hex[:12], mode=mode)
         with _JOBS_LOCK:
             _JOBS[job.id] = job
 
-        _write_meta(job.id, criteria, profile, strategy, with_prices, status="running")
+        _write_meta(job.id, mode, criteria, profile, strategy, with_prices, status="running")
 
         thread = threading.Thread(
             target=_run_job,
@@ -137,7 +159,7 @@ def create_app() -> Flask:
             daemon=True,
         )
         thread.start()
-        return jsonify(job_id=job.id)
+        return jsonify(job_id=job.id, mode=mode)
 
     @app.route("/api/status/<job_id>")
     @login_required
@@ -145,7 +167,7 @@ def create_app() -> Flask:
         job = _JOBS.get(job_id)
         if not job:
             return jsonify(error="job inconnu"), 404
-        return jsonify(status=job.status, log=job.log, error=job.error)
+        return jsonify(status=job.status, log=job.log, error=job.error, mode=job.mode)
 
     @app.route("/api/result/<job_id>")
     @login_required
@@ -154,32 +176,46 @@ def create_app() -> Flask:
         if job and job.status == "running":
             return jsonify(error="job en cours"), 409
         if job and job.status == "done":
-            return jsonify(summary=job.summary, rows=_rows(job.concerts))
+            return jsonify(mode=job.mode, summary=job.summary, rows=_rows(job.mode, job.items))
 
         # Pas (ou plus) en mémoire (redémarrage serveur, ancien run…) : on
         # retombe sur les fichiers persistés pour que l'historique reste
         # consultable au-delà de la durée de vie du process.
-        concerts = _load_concerts_from_disk(job_id)
-        if concerts is None:
+        mode = _mode_from_meta(job_id)
+        items = _load_items_from_disk(job_id, mode)
+        if items is None:
             return jsonify(error="job inconnu"), 404
-        df = analysis.concerts_to_frame(concerts)
-        return jsonify(summary=analysis.summarize(df), rows=_rows(concerts))
+        summary = _summarize(mode, _frame(mode, items))
+        return jsonify(mode=mode, summary=summary, rows=_rows(mode, items))
 
     @app.route("/api/recommend/<job_id>", methods=["POST"])
     @login_required
     def api_recommend(job_id: str):
         job = _JOBS.get(job_id)
-        concerts = job.concerts if (job and job.concerts) else _load_concerts_from_disk(job_id)
-        if not concerts:
+        mode = job.mode if job else _mode_from_meta(job_id)
+        items = job.items if (job and job.items) else _load_items_from_disk(job_id, mode)
+        if not items:
             return jsonify(error="pas de benchmark disponible"), 404
         data = request.get_json(force=True) or {}
-        df = analysis.concerts_to_frame(concerts)
-        reco = recommend(
-            df,
-            genre=data.get("genre") or None,
-            capacity=_int_or_none(data.get("capacity")),
-            artist=data.get("artist") or None,
-        )
+        df = _frame(mode, items)
+        if mode == FESTIVAL:
+            setting = data.get("setting") or None
+            reco = recommend_festival(
+                df,
+                name=data.get("name") or None,
+                genre=data.get("genre") or None,
+                capacity=_int_or_none(data.get("capacity")),
+                nb_nights=_int_or_none(data.get("nb_nights")),
+                setting=setting if setting in SETTING_LABELS else None,
+                artists_per_night=_int_or_none(data.get("artists_per_night")),
+            )
+        else:
+            reco = recommend(
+                df,
+                genre=data.get("genre") or None,
+                capacity=_int_or_none(data.get("capacity")),
+                artist=data.get("artist") or None,
+            )
         return jsonify(reco=reco)
 
     # --- Historique ----------------------------------------------------------
@@ -203,7 +239,7 @@ def create_app() -> Flask:
 # --- Exécution d'un job -----------------------------------------------------
 def _run_job(
     job: Job,
-    criteria: SearchCriteria,
+    criteria: AnyCriteria,
     profile: Optional[str],
     strategy: Optional[str],
     with_prices: bool,
@@ -214,14 +250,18 @@ def _run_job(
     try:
         client = build_client()  # clé résolue côté serveur (env)
         settings = config.resolve_settings(profile, strategy)
-        # Résolu explicitement ici (et non seulement dans build_benchmark) pour
-        # que la méta/l'historique reflètent les critères réellement utilisés
-        # (target_artists, style déduit) — idempotent, donc aucun coût
-        # supplémentaire quand build_benchmark la ré-appliquera juste après.
-        criteria = resolve_target_artists(client, criteria, settings, log)
-        _write_meta(job.id, criteria, profile, strategy, with_prices, status="running")
+        # Résolu explicitement ici (et non seulement dans le pipeline) pour que
+        # la méta/l'historique reflètent les critères réellement utilisés
+        # (cibles comparables, style déduit) — idempotent, donc aucun coût
+        # supplémentaire quand le pipeline la ré-appliquera juste après.
+        if job.mode == FESTIVAL:
+            criteria = resolve_target_festivals(client, criteria, settings, log)
+        else:
+            criteria = resolve_target_artists(client, criteria, settings, log)
+        _write_meta(job.id, job.mode, criteria, profile, strategy, with_prices, status="running")
 
-        concerts = build_benchmark(
+        build = build_festival_benchmark if job.mode == FESTIVAL else build_benchmark
+        items = build(
             criteria,
             client=client,
             with_prices=with_prices,
@@ -229,24 +269,24 @@ def _run_job(
             strategy=strategy,
             progress=log,
         )
-        job.concerts = concerts
-        df = analysis.concerts_to_frame(concerts)
-        job.summary = analysis.summarize(df)
+        job.items = items
+        df = _frame(job.mode, items)
+        job.summary = _summarize(job.mode, df)
 
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         base = OUT_DIR / f"benchmark_{job.id}"
         df.to_csv(base.with_suffix(".csv"), index=False)
         base.with_suffix(".json").write_text(
-            json.dumps([c.model_dump() for c in concerts], ensure_ascii=False, indent=2),
+            json.dumps([i.model_dump() for i in items], ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         base.with_name(base.name + "_synthese.md").write_text(
-            analysis.summary_to_markdown(job.summary), encoding="utf-8"
+            _markdown(job.mode, job.summary), encoding="utf-8"
         )
         log("Terminé.")
         job.status = "done"
         _write_meta(
-            job.id, criteria, profile, strategy, with_prices,
+            job.id, job.mode, criteria, profile, strategy, with_prices,
             status="done", summary=job.summary,
         )
     except Exception as exc:  # noqa: BLE001
@@ -254,9 +294,24 @@ def _run_job(
         log(f"Erreur : {exc}")
         job.status = "error"
         _write_meta(
-            job.id, criteria, profile, strategy, with_prices,
+            job.id, job.mode, criteria, profile, strategy, with_prices,
             status="error", error=str(exc),
         )
+
+
+# --- Dispatch par mode ---------------------------------------------------------
+def _frame(mode: str, items: list):
+    return analysis.festivals_to_frame(items) if mode == FESTIVAL else analysis.concerts_to_frame(items)
+
+
+def _summarize(mode: str, df) -> dict:
+    return analysis.summarize_festivals(df) if mode == FESTIVAL else analysis.summarize(df)
+
+
+def _markdown(mode: str, summary: dict) -> str:
+    if mode == FESTIVAL:
+        return analysis.summary_festivals_to_markdown(summary)
+    return analysis.summary_to_markdown(summary)
 
 
 # --- Historique / persistance -----------------------------------------------
@@ -266,7 +321,8 @@ def _meta_path(job_id: str) -> Path:
 
 def _write_meta(
     job_id: str,
-    criteria: SearchCriteria,
+    mode: str,
+    criteria: AnyCriteria,
     profile: Optional[str],
     strategy: Optional[str],
     with_prices: bool,
@@ -287,6 +343,7 @@ def _write_meta(
     meta.update(
         {
             "job_id": job_id,
+            "mode": mode,
             "created_at": meta.get("created_at") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "criteria": criteria.model_dump(),
             "profile": profile or config.DEFAULT_PROFILE,
@@ -302,6 +359,18 @@ def _write_meta(
     path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _read_meta(job_id: str) -> dict:
+    try:
+        return json.loads(_meta_path(job_id).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _mode_from_meta(job_id: str) -> str:
+    # Les runs antérieurs au mode Festival n'ont pas de champ "mode" : artiste.
+    return FESTIVAL if _read_meta(job_id).get("mode") == FESTIVAL else ARTIST
+
+
 def _list_history() -> list[dict]:
     """Liste les runs passés (les plus récents d'abord) à partir des métadonnées persistées."""
     if not OUT_DIR.exists():
@@ -309,21 +378,24 @@ def _list_history() -> list[dict]:
     runs = []
     for meta_file in OUT_DIR.glob("benchmark_*_meta.json"):
         try:
-            runs.append(json.loads(meta_file.read_text(encoding="utf-8")))
+            run = json.loads(meta_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
+        run.setdefault("mode", ARTIST)
+        runs.append(run)
     runs.sort(key=lambda r: r.get("created_at", ""), reverse=True)
     return runs
 
 
-def _load_concerts_from_disk(job_id: str) -> Optional[list[Concert]]:
-    """Recharge les `Concert` d'un run passé depuis son export JSON."""
+def _load_items_from_disk(job_id: str, mode: str) -> Optional[list]:
+    """Recharge les `Concert` / `Festival` d'un run passé depuis son export JSON."""
     path = OUT_DIR / f"benchmark_{job_id}.json"
     if not path.exists():
         return None
+    model = Festival if mode == FESTIVAL else Concert
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return [Concert(**c) for c in data]
+        return [model(**c) for c in data]
     except (json.JSONDecodeError, OSError, ValueError):
         return None
 
@@ -344,6 +416,26 @@ def _criteria_from_payload(data: dict) -> SearchCriteria:
     )
 
 
+def _festival_criteria_from_payload(data: dict) -> FestivalCriteria:
+    return FestivalCriteria(
+        reference_festival=(data.get("reference_festival") or "").strip() or None,
+        genres=_as_list(data.get("genres")),
+        location=data.get("location") or None,
+        countries=_as_list(data.get("countries")) or ["France"],
+        settings=[s for s in _as_list(data.get("settings")) if s in SETTING_LABELS],
+        capacity_min=_int_or_none(data.get("capacity_min")),
+        capacity_max=_int_or_none(data.get("capacity_max")),
+        nights_min=_int_or_none(data.get("nights_min")),
+        nights_max=_int_or_none(data.get("nights_max")),
+        artists_per_night_min=_int_or_none(data.get("artists_per_night_min")),
+        artists_per_night_max=_int_or_none(data.get("artists_per_night_max")),
+        date_from=data.get("date_from") or None,
+        date_to=data.get("date_to") or None,
+        max_results=_int_or_none(data.get("max_results")) or 10,
+        extra=data.get("extra") or None,
+    )
+
+
 def _as_list(value) -> list[str]:
     if not value:
         return []
@@ -359,27 +451,42 @@ def _int_or_none(value) -> Optional[int]:
         return None
 
 
-def _rows(concerts: list[Concert]) -> list[dict]:
+def _rows(mode: str, items: list) -> list[dict]:
     """Représentation compacte pour le tableau de l'UI."""
     out = []
-    for c in concerts:
-        eur = c.prices_eur(config.FX_TO_EUR)
-        prices_str = ", ".join(f"{p.name} {p.price:g}{p.currency}" for p in c.prices)
-        out.append(
-            {
-                "artist": c.artist,
-                "date": c.date,
-                "venue": c.venue,
-                "city": c.city,
-                "capacity": c.capacity,
-                "genre": c.genre,
-                "event_type": c.event_type.value,
-                "price_confidence": c.price_confidence.value,
-                "prices": prices_str,
-                "min_eur": round(min(eur), 2) if eur else None,
-                "max_eur": round(max(eur), 2) if eur else None,
-                "source_url": c.source_url,
-                "notes": c.notes,
-            }
-        )
+    for i in items:
+        eur = i.prices_eur(config.FX_TO_EUR)
+        common = {
+            "city": i.city,
+            "capacity": i.capacity,
+            "price_confidence": i.price_confidence.value,
+            "prices": ", ".join(f"{p.name} {p.price:g}{p.currency}" for p in i.prices),
+            "min_eur": round(min(eur), 2) if eur else None,
+            "max_eur": round(max(eur), 2) if eur else None,
+            "source_url": i.source_url,
+            "notes": i.notes,
+        }
+        if mode == FESTIVAL:
+            out.append({
+                **common,
+                "festival": i.name,
+                "edition": i.edition,
+                "date_start": i.date_start,
+                "date_end": i.date_end,
+                "region": i.region,
+                "setting": i.setting.value,
+                "genres": i.genres,
+                "headliners": ", ".join(i.headliners),
+                "nb_nights": i.nb_nights,
+                "artists_per_night": i.artists_per_night,
+            })
+        else:
+            out.append({
+                **common,
+                "artist": i.artist,
+                "date": i.date,
+                "venue": i.venue,
+                "genre": i.genre,
+                "event_type": i.event_type.value,
+            })
     return out

@@ -114,12 +114,40 @@ python -m benchmarker.cli recommend \
 
 Renvoie une fourchette (25e–75e percentile) et une médiane par catégorie, avec l'échantillon de comparables retenu.
 
+### Mode Festival
+
+Même logique que le mode Artiste, avec des critères propres aux festivals : **jauge journalière**, **cadre** (urbain / périurbain / rural), **programmation**, **nombre de soirs**, **nombre d'artistes par soir**. Un **festival de référence** optionnel permet de cibler des festivals comparables (même jauge, cadre, programmation et format).
+
+```bash
+python -m benchmarker.cli festival \
+  --reference-festival "Les Vieilles Charrues" \
+  --setting rural --nights-min 2 --nights-max 4 \
+  --capacity-min 15000 --capacity-max 60000 \
+  -o out/festivals.csv
+```
+
+Les grilles sont extraites avec la même mécanique que les concerts (le site officiel du festival sert de source de repli privilégiée). Les noms de pass, très hétérogènes (« Pass Samedi », « Forfait 3J », « Pass intégral », « Camping »…), sont normalisés en types comparables : **Pass N jours**, **VIP / Premium**, **Tarif réduit**, **Option** (camping, parking…). L'analyse ajoute :
+
+- **prix par jour** (prix du pass / nombre de jours, plein tarif hors VIP et options) ;
+- **prix par artiste vu** (prix par jour / artistes par soir) — pour comparer des formats différents ;
+- ventilation du prix par jour **par cadre** et **par tranche de jauge**.
+
+Préconisation pour un festival cible :
+
+```bash
+python -m benchmarker.cli festival-recommend --benchmark out/festivals.json \
+  --genre rap --capacity 25000 --nights 3 --setting rural --artists-per-night 10
+```
+
+Renvoie une fourchette par type de pass, un prix par jour de référence, une estimation du pass couvrant tous les soirs de la cible, et une estimation du pass 1 jour au prorata du plateau (artistes par soir).
+
 ## Interface web
 
 Une interface web locale permet de piloter l'outil sans terminal, avec une direction artistique dédiée (glassmorphism iOS 18, navbar pilule, bleu `#1450E2`) :
 
-- **Nouveau** : formulaire de critères (dont un champ optionnel « Artiste de référence » pour cibler des artistes comparables plutôt que/en complément d'un style), progression en direct, résultats (tuiles de synthèse, tableau par catégorie, détail des dates avec la colonne `price_confidence` colorée), téléchargements CSV/JSON/synthèse, préconisation tarifaire.
-- **Historique** : liste des runs passés (persistée sur disque — survit aux redémarrages du serveur), avec critères utilisés, statut, compteurs, bouton **Voir** (recharge les résultats) et **Recharger les critères** (pré-remplit le formulaire pour relancer une recherche similaire).
+- **Artiste** : formulaire de critères (dont un champ optionnel « Artiste de référence » pour cibler des artistes comparables plutôt que/en complément d'un style), progression en direct, résultats (tuiles de synthèse, tableau par catégorie, détail des dates avec la colonne `price_confidence` colorée et les notes), téléchargements CSV/JSON/synthèse, préconisation tarifaire.
+- **Festival** : même parcours avec les critères festival (festival de référence, programmation, jauge/jour, cadre, soirs, artistes/soir) ; résultats par type de pass, prix par jour, prix par artiste, par cadre et par jauge ; préconisation de prix de pass.
+- **Historique** : runs Artiste et Festival (badge de mode), persistés sur disque — survivent aux redémarrages du serveur —, avec critères utilisés, statut, compteurs, bouton **Voir** (recharge les résultats dans le bon onglet) et **Recharger les critères** (pré-remplit le formulaire correspondant).
 
 Lancement en local :
 
@@ -179,6 +207,10 @@ Réglable par variables d'environnement (voir `benchmarker/config.py`) :
 | `BENCHMARKER_FETCH_MAX_CONTENT_TOKENS` | `6000` | Plafond de contenu ramené par `web_fetch` |
 | `BENCHMARKER_SIMILAR_ARTISTS_MAX_USES` | `4` | Recherches web max pour résoudre un artiste de référence |
 | `BENCHMARKER_SIMILAR_ARTISTS_COUNT` | `6` | Nombre d'artistes comparables visés |
+| `BENCHMARKER_SIMILAR_FESTIVALS_MAX_USES` | `4` | Recherches web max pour résoudre un festival de référence |
+| `BENCHMARKER_SIMILAR_FESTIVALS_COUNT` | `6` | Nombre de festivals comparables visés |
+| `BENCHMARKER_DISCOVERY_SEARCH_USES_PER_TARGET` | `2` | Recherches de découverte par artiste/festival ciblé (plafonné par `BENCHMARKER_MAX_SEARCH_USES_CAP`, défaut 20) |
+| `BENCHMARKER_LLM_REQUEST_TIMEOUT_S` | `180` | Timeout par appel LLM (allongé automatiquement pour une découverte à gros budget) |
 
 > Pour minimiser encore le coût : `BENCHMARKER_FETCH_STRATEGY=playwright` supprime totalement le fallback payant (au risque de rater les pages où le rendu ne suffit pas).
 
@@ -187,11 +219,12 @@ Réglable par variables d'environnement (voir `benchmarker/config.py`) :
 ```
 benchmarker/
 ├── config.py       # modèle, outils, sources, devises
-├── models.py       # schéma Pydantic (Concert, PriceCategory, SearchCriteria…)
+├── models.py       # schéma Pydantic (Concert, Festival, critères des deux modes…)
 ├── llm.py          # client + boucle d'outils serveur + extraction structurée
 ├── similar_artists.py  # résolution artiste de référence → artistes comparables
+├── festivals.py    # mode Festival : festivals comparables + découverte
 ├── discovery.py    # étape 1 : découverte des dates
-├── extraction.py   # étape 2 : extraction des prix
+├── extraction.py   # étape 2 : extraction des prix (concerts et festivals)
 ├── analysis.py     # stats pandas + export
 ├── recommend.py    # préconisation par comparables
 ├── pipeline.py     # orchestration bout-en-bout
