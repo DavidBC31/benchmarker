@@ -141,6 +141,19 @@ python -m benchmarker.cli festival-recommend --benchmark out/festivals.json \
 
 Renvoie une fourchette par type de pass, un prix par jour de référence, une estimation du pass couvrant tous les soirs de la cible, et une estimation du pass 1 jour au prorata du plateau (artistes par soir).
 
+### Justesse et cohérence des résultats
+
+Les statistiques et la préconisation suivent les mêmes règles, pour comparer à périmètre égal :
+
+- **Plein tarif uniquement** : tarifs réduits, enfant, habitants (« Tarif ardennais »…), PMR, groupes et options (camping, parking) sont conservés dans les exports mais exclus des statistiques.
+- **Une valeur par événement** et par catégorie / type de pass. Les grilles identiques sur plusieurs dates d'un même artiste comptent une fois. Le **prix d'entrée** (catégorie la moins chère de chaque date) complète les statistiques par catégorie.
+- **Contrôles de cohérence** : prix anormalement bas, catégorie en double à prix différents, pass multi-jours moins cher qu'un pass 1 jour ou plus cher que la somme des jours… Ces cas sont signalés (⚠ dans le tableau) ; les prix sous 5 € sont aussi écartés des statistiques.
+- **Édition et phase de prix** : chaque grille est rattachée à l'édition réellement affichée (une page peut déjà montrer l'édition suivante) et à sa phase (early bird, normal, dernière minute, sur place). La préconisation festival compare au tarif « normal » quand au moins 3 comparables l'ont, sinon elle signale le mélange.
+- **Score de comparabilité (0-100)** de chaque événement avec la cible : critères saisis, sinon profil chiffré de la référence (jauge, cadre, soirs, artistes par soir), sinon l'événement de référence lui-même. La jauge agit en multiplicateur (un écart de jauge ne se compense pas par une programmation proche). Sous 40, l'événement est **hors profil** : affiché, mais exclu des statistiques. S'il reste moins de 2 événements tarifés dans le profil, les statistiques portent sur tous les événements, avec un avertissement.
+- **Valeurs estimées** (jauge reprise de la capacité habituelle d'une salle, artistes par soir approximés) signalées par « ≈ ». Le prix par artiste vu n'est affiché qu'avec au moins 3 festivals dont le nombre d'artistes par soir est connu.
+
+Côté efficience, **3 événements sont extraits en parallèle** (un navigateur par fil : même coût, environ 3 fois plus rapide), et chaque grille est **mémorisée** 7 jours (échecs : 24 h) dans `cache/prices/` : relancer un benchmark sur les mêmes événements ne repaie pas l'extraction et rend le même résultat.
+
 ## Interface web
 
 Une interface web locale permet de piloter l'outil sans terminal, avec une direction artistique dédiée (glassmorphism iOS 18, navbar pilule, bleu `#1450E2`) :
@@ -211,6 +224,12 @@ Réglable par variables d'environnement (voir `benchmarker/config.py`) :
 | `BENCHMARKER_SIMILAR_FESTIVALS_COUNT` | `6` | Nombre de festivals comparables visés |
 | `BENCHMARKER_DISCOVERY_SEARCH_USES_PER_TARGET` | `2` | Recherches de découverte par artiste/festival ciblé (plafonné par `BENCHMARKER_MAX_SEARCH_USES_CAP`, défaut 20) |
 | `BENCHMARKER_LLM_REQUEST_TIMEOUT_S` | `180` | Timeout par appel LLM (allongé automatiquement pour une découverte à gros budget) |
+| `BENCHMARKER_EXTRACTION_WORKERS` | `3` | Événements extraits en parallèle (un navigateur headless par fil) |
+| `BENCHMARKER_CACHE_DIR` | `cache/prices` | Mémoire des grilles extraites |
+| `BENCHMARKER_PRICE_CACHE_TTL_DAYS` | `7` | Durée de mémoire d'une grille trouvée (jours) |
+| `BENCHMARKER_PRICE_CACHE_FAIL_TTL_HOURS` | `24` | Durée de mémoire d'un échec (heures) |
+| `BENCHMARKER_MIN_PLAUSIBLE_PRICE_EUR` | `5` | Prix plein tarif sous lequel un prix est jugé aberrant |
+| `BENCHMARKER_COMPARABILITY_MIN` | `40` | Score sous lequel un événement est hors profil |
 
 > Pour minimiser encore le coût : `BENCHMARKER_FETCH_STRATEGY=playwright` supprime totalement le fallback payant (au risque de rater les pages où le rendu ne suffit pas).
 
@@ -223,6 +242,8 @@ benchmarker/
 ├── llm.py          # client + boucle d'outils serveur + extraction structurée
 ├── similar_artists.py  # résolution artiste de référence → artistes comparables
 ├── festivals.py    # mode Festival : festivals comparables + découverte
+├── comparability.py  # score de comparabilité avec la cible
+├── price_cache.py  # mémoire des grilles extraites
 ├── discovery.py    # étape 1 : découverte des dates
 ├── extraction.py   # étape 2 : extraction des prix (concerts et festivals)
 ├── analysis.py     # stats pandas + export

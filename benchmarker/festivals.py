@@ -42,6 +42,9 @@ Reste factuel : ne propose que des festivals dont tu es raisonnablement sûr."""
 _SIMILAR_INSTRUCTION = """À partir des recherches ci-dessous, résume en une ligne le profil du
 festival de référence (cadre, jauge journalière, programmation, nombre de soirs), indique sa
 programmation dominante, et liste les festivals comparables pour un benchmark tarifaire.
+Donne aussi ce profil en chiffres : jauge journalière, cadre (urbain / periurbain / rural),
+nombre de soirs, artistes par soir (0 ou chaîne vide si inconnu ; pour une fourchette,
+prends le milieu).
 N'inclus PAS le festival de référence lui-même dans la liste des comparables."""
 
 
@@ -71,7 +74,10 @@ def find_similar_festivals(
         effort=settings.discovery_effort,
     )
     if not findings:
-        return SimilarFestivalsResult(reference_festival=festival)
+        return SimilarFestivalsResult(
+            reference_festival=festival, reference_capacity=0, reference_setting="",
+            reference_nights=0, reference_artists_per_night=0,
+        )
 
     parsed = parse_structured(
         client,
@@ -81,7 +87,10 @@ def find_similar_festivals(
         model=settings.structure_model,
     )
     if parsed is None:
-        return SimilarFestivalsResult(reference_festival=festival)
+        return SimilarFestivalsResult(
+            reference_festival=festival, reference_capacity=0, reference_setting="",
+            reference_nights=0, reference_artists_per_night=0,
+        )
 
     similar = [
         f for f in parsed.similar_festivals
@@ -92,6 +101,10 @@ def find_similar_festivals(
         inferred_profile=parsed.inferred_profile,
         inferred_genre=parsed.inferred_genre,
         similar_festivals=similar,
+        reference_capacity=parsed.reference_capacity,
+        reference_setting=parsed.reference_setting,
+        reference_nights=parsed.reference_nights,
+        reference_artists_per_night=parsed.reference_artists_per_night,
     )
 
 
@@ -133,6 +146,8 @@ dates de début et de fin (ISO), commune, région, pays, cadre (urbain / periurb
 jauge journalière, programmation dominante, têtes d'affiche (séparées par des virgules),
 nombre de soirs, artistes par soir, et l'URL de billetterie ou de la page tarifs si elle
 apparaît (laisse vide sinon — ne pas la deviner). Champ inconnu : chaîne vide ou 0.
+Indique honnêtement si la jauge journalière et le nombre d'artistes par soir sont
+estimés (calculés, approximés) plutôt que lus tels quels dans les résultats.
 IMPORTANT : inclus TOUS les festivals confirmés, même sans URL. Ignore les doublons et les
 festivals hors critères."""
 

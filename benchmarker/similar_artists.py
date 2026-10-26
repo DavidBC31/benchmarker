@@ -32,6 +32,8 @@ correspondent à ces critères."""
 _SIMILAR_INSTRUCTION = """À partir des recherches ci-dessous, indique le style musical
 dominant de l'artiste de référence et propose une liste d'artistes comparables (même
 style, notoriété et taille de salle similaires) pour un benchmark tarifaire.
+Indique aussi la jauge typique des salles qu'il remplit actuellement (ex. 6000 pour une
+tournée des Zéniths, 16000 pour des Arenas ; 0 si inconnue).
 N'inclus PAS l'artiste de référence lui-même dans la liste des comparables."""
 
 
@@ -63,7 +65,7 @@ def find_similar_artists(
         effort=settings.discovery_effort,
     )
     if not findings:
-        return SimilarArtistsResult(reference_artist=artist)
+        return SimilarArtistsResult(reference_artist=artist, reference_capacity=0)
 
     parsed = parse_structured(
         client,
@@ -73,7 +75,7 @@ def find_similar_artists(
         model=settings.structure_model,
     )
     if parsed is None:
-        return SimilarArtistsResult(reference_artist=artist)
+        return SimilarArtistsResult(reference_artist=artist, reference_capacity=0)
 
     # Le modèle reformule parfois le nom ; on garde la saisie de l'utilisateur
     # comme référence canonique, et on filtre un éventuel doublon.
@@ -85,4 +87,5 @@ def find_similar_artists(
         reference_artist=artist,
         inferred_genre=parsed.inferred_genre,
         similar_artists=similar,
+        reference_capacity=parsed.reference_capacity,
     )

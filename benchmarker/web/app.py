@@ -130,6 +130,7 @@ def create_app() -> Flask:
             has_key=has_key,
             default_strategy=config.FETCH_STRATEGY,
             default_profile=config.DEFAULT_PROFILE,
+            comparability_min=config.COMPARABILITY_MIN,
             auth_enabled=bool(auth_token),
         )
 
@@ -465,6 +466,11 @@ def _rows(mode: str, items: list) -> list[dict]:
             "max_eur": round(max(eur), 2) if eur else None,
             "source_url": i.source_url,
             "notes": i.notes,
+            "price_phase": i.price_phase,
+            "comparability": i.comparability,
+            "comparability_detail": i.comparability_detail,
+            "anomalies": i.anomalies,
+            "estimated_fields": i.estimated_fields,
         }
         if mode == FESTIVAL:
             out.append({

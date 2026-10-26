@@ -73,7 +73,8 @@ et l'URL de billetterie si elle apparaît dans les résultats (laisse vide sinon
 ne pas essayer de la deviner ou de la reconstruire).
 Jauge : capacité de la salle. Si elle n'apparaît pas dans les résultats mais que la
 salle est connue (Accor Arena, un Zénith, une Arena…), indique sa capacité habituelle
-approximative — c'est un critère clé de comparaison du benchmark.
+approximative — c'est un critère clé de comparaison du benchmark — et indique-le
+comme estimée (capacity_estimated).
 IMPORTANT : inclus TOUTES les dates confirmées dans les résultats de recherche
 ci-dessous, même celles sans URL. Ne rejette une date que si elle est hors
 critères ou si elle est un doublon.

@@ -59,6 +59,40 @@ class PriceCategory(BaseModel):
     )
 
 
+def normalize_url(url: Optional[str]) -> Optional[str]:
+    """URL exploitable ou None. Ajoute `https://` aux domaines nus
+    (« garorock.com », constaté en conditions réelles : le navigateur les
+    refusait et elles échappaient aux contrôles de domaine)."""
+    if not url:
+        return None
+    u = url.strip().strip("<>\"'")
+    if not u or any(c.isspace() for c in u):
+        return None
+    if u.startswith("//"):
+        u = "https:" + u
+    if not re.match(r"^https?://", u, re.I):
+        if not re.match(r"^[\w.-]+\.[a-z]{2,}(?:[/?#]|$)", u, re.I):
+            return None
+        u = "https://" + u
+    return u
+
+
+def normalize_phase(value: Optional[str]) -> Optional[str]:
+    """Ramène une phase de prix libre à : early bird, normal, dernière minute, sur place."""
+    if not value or not value.strip():
+        return None
+    v = value.strip().lower()
+    if any(k in v for k in ("early", "prévente", "prevente", "pré-vente", "blind", "lancement")):
+        return "early bird"
+    if any(k in v for k in ("dernière", "derniere", "last")):
+        return "dernière minute"
+    if any(k in v for k in ("sur place", "guichet", "door")):
+        return "sur place"
+    if any(k in v for k in ("normal", "plein", "standard", "régulier", "regulier")):
+        return "normal"
+    return None
+
+
 def prices_to_eur(prices: List[PriceCategory], fx: dict[str, float]) -> List[float]:
     """Convertit une grille en EUR (les devises sans taux connu sont ignorées)."""
     out: List[float] = []
@@ -105,6 +139,19 @@ class Concert(BaseModel):
         default=None,
         description="Infos utiles : early bird, dynamic pricing, guest, complet, etc.",
     )
+    price_phase: Optional[str] = Field(
+        default=None, description="Phase de prix de la grille : early bird, normal, dernière minute, sur place."
+    )
+    comparability: Optional[int] = Field(
+        default=None, description="Score de comparabilité avec la cible (0-100)."
+    )
+    comparability_detail: Optional[str] = Field(default=None, description="Détail du score.")
+    anomalies: List[str] = Field(
+        default_factory=list, description="Incohérences détectées dans la grille (signalées, pas corrigées)."
+    )
+    estimated_fields: List[str] = Field(
+        default_factory=list, description="Champs estimés plutôt que trouvés tels quels (capacity…)."
+    )
 
     # --- Helpers --------------------------------------------------------------
     def prices_eur(self, fx: dict[str, float]) -> List[float]:
@@ -148,7 +195,10 @@ class DiscoveredConcert(BaseModel):
     event_type: Optional[str] = Field(
         default=None, description="Nature : date unique, tournée, festival…"
     )
-    capacity: Optional[int] = Field(default=None, description="Jauge si connue.")
+    capacity: Optional[int] = Field(default=None, description="Jauge de la salle.")
+    capacity_estimated: bool = Field(
+        description="True si la jauge est la capacité habituelle de la salle (non lue dans les résultats)."
+    )
     source_url: Optional[str] = Field(
         default=None, description="URL de la page billetterie."
     )
@@ -193,7 +243,8 @@ def discovered_to_concert(d: DiscoveredConcert) -> Concert:
         capacity=d.capacity,
         genre=d.genre,
         event_type=coerce_event_type(d.event_type),
-        source_url=d.source_url,
+        source_url=normalize_url(d.source_url),
+        estimated_fields=["capacity"] if (d.capacity and d.capacity_estimated) else [],
     )
 
 
@@ -203,6 +254,12 @@ class PriceExtraction(BaseModel):
     prices: List[PriceCategory] = Field(default_factory=list)
     price_confidence: PriceConfidence = Field(default=PriceConfidence.NONE)
     notes: Optional[str] = Field(default=None)
+    edition: str = Field(
+        description="Année / édition à laquelle s'applique la grille affichée (ex. 2027), chaîne vide si inconnue."
+    )
+    phase: str = Field(
+        description="Phase de prix de la grille retenue : early bird, normal, dernière minute, sur place, ou chaîne vide."
+    )
 
 
 class SearchCriteria(BaseModel):
@@ -222,6 +279,10 @@ class SearchCriteria(BaseModel):
             "Liste résolue d'artistes à rechercher (renseignée automatiquement à "
             "partir de reference_artist ; peut aussi être fournie directement)."
         ),
+    )
+    reference_capacity: Optional[int] = Field(
+        default=None,
+        description="Jauge habituelle des salles de l'artiste de référence (résolue automatiquement).",
     )
     genres: List[str] = Field(
         default_factory=list, description="Styles musicaux ciblés."
@@ -283,6 +344,9 @@ class SimilarArtistsResult(BaseModel):
         default_factory=list,
         description="Artistes comparables (même style, notoriété, taille de salle). Ne pas inclure l'artiste de référence.",
     )
+    reference_capacity: int = Field(
+        description="Jauge typique des salles que remplit actuellement l'artiste de référence ; 0 si inconnue."
+    )
 
 
 # =============================================================================
@@ -321,6 +385,19 @@ class Festival(BaseModel):
     )
     notes: Optional[str] = Field(
         default=None, description="Infos utiles : early bird, sold out, phases de prix, etc."
+    )
+    price_phase: Optional[str] = Field(
+        default=None, description="Phase de prix de la grille : early bird, normal, dernière minute, sur place."
+    )
+    comparability: Optional[int] = Field(
+        default=None, description="Score de comparabilité avec la cible (0-100)."
+    )
+    comparability_detail: Optional[str] = Field(default=None, description="Détail du score.")
+    anomalies: List[str] = Field(
+        default_factory=list, description="Incohérences détectées dans la grille (signalées, pas corrigées)."
+    )
+    estimated_fields: List[str] = Field(
+        default_factory=list, description="Champs estimés plutôt que trouvés tels quels (capacity…)."
     )
 
     def prices_eur(self, fx: dict[str, float]) -> List[float]:
@@ -362,10 +439,16 @@ class DiscoveredFestival(BaseModel):
     country: str = Field(description="Pays, ou chaîne vide.")
     setting: str = Field(description="urbain, periurbain ou rural ; chaîne vide si inconnu.")
     capacity: int = Field(description="Jauge journalière ; 0 si inconnue.")
+    capacity_estimated: bool = Field(
+        description="True si la jauge est estimée (ex. fréquentation cumulée divisée par le nombre de jours)."
+    )
     genres: str = Field(description="Programmation dominante, ou chaîne vide.")
     headliners: str = Field(description="Têtes d'affiche séparées par des virgules, ou chaîne vide.")
     nb_nights: int = Field(description="Nombre de soirs / jours ; 0 si inconnu.")
     artists_per_night: int = Field(description="Artistes par soir ; 0 si inconnu.")
+    artists_per_night_estimated: bool = Field(
+        description="True si le nombre d'artistes par soir est estimé plutôt que compté sur la programmation."
+    )
     source_url: str = Field(description="URL billetterie / tarifs, ou chaîne vide.")
 
 
@@ -410,7 +493,11 @@ def discovered_to_festival(d: DiscoveredFestival) -> Festival:
         headliners=headliners[:10],
         nb_nights=num(d.nb_nights),
         artists_per_night=num(d.artists_per_night),
-        source_url=text(d.source_url),
+        source_url=normalize_url(d.source_url),
+        estimated_fields=[
+            f for f, est in (("capacity", d.capacity_estimated), ("artists_per_night", d.artists_per_night_estimated))
+            if est and getattr(d, f)
+        ],
     )
 
 
@@ -431,6 +518,12 @@ class FestivalCriteria(BaseModel):
         default_factory=list,
         description="Liste résolue de festivals à rechercher (depuis reference_festival).",
     )
+    # Profil chiffré du festival de référence (résolu automatiquement) : cible
+    # du score de comparabilité quand aucun critère explicite n'est donné.
+    reference_capacity: Optional[int] = Field(default=None)
+    reference_setting: Optional[str] = Field(default=None)
+    reference_nights: Optional[int] = Field(default=None)
+    reference_artists_per_night: Optional[int] = Field(default=None)
     genres: List[str] = Field(default_factory=list, description="Programmation ciblée (styles).")
     location: Optional[str] = Field(default=None, description="Zone géographique.")
     countries: List[str] = Field(default_factory=lambda: ["France"])
@@ -491,3 +584,7 @@ class SimilarFestivalsResult(BaseModel):
         default_factory=list,
         description="Festivals comparables (jauge, cadre, programmation, format). Ne pas inclure la référence.",
     )
+    reference_capacity: int = Field(description="Jauge journalière du festival de référence ; 0 si inconnue.")
+    reference_setting: str = Field(description="Cadre du festival de référence : urbain, periurbain, rural, ou chaîne vide.")
+    reference_nights: int = Field(description="Nombre de soirs du festival de référence ; 0 si inconnu.")
+    reference_artists_per_night: int = Field(description="Artistes par soir du festival de référence ; 0 si inconnu.")

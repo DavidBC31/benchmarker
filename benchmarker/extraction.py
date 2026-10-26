@@ -21,7 +21,7 @@ import anthropic
 
 from . import config
 from .llm import parse_structured, run_server_tool_loop
-from .models import PriceConfidence, PriceExtraction, PricedItem
+from .models import Festival, PriceConfidence, PriceExtraction, PricedItem, normalize_phase, normalize_url
 
 _FETCH_SYSTEM = """Tu es un analyste billetterie. On te donne l'URL d'une page de vente
 de billets pour un concert ou un festival. Récupère la page et restitue son contenu tarifaire.
@@ -43,8 +43,18 @@ Pour un FESTIVAL : une catégorie par type de pass, en gardant explicitement la
 durée dans le nom (ex. « Pass 1 jour », « Pass Samedi », « Pass 2 jours »,
 « Pass 3 jours », « Pass intégral », « Pass VIP 3 jours »). Les options vendues
 à part (camping, parking, navette…) sont des catégories séparées dont le nom
-commence par « Option : ». Si plusieurs phases de prix existent (early, normal,
-sur place), garde le tarif actuellement en vente et mentionne les autres en note."""
+commence par « Option : ».
+
+Tarifs à NE PAS mélanger au plein tarif : garde-les, mais nomme-les explicitement
+(« Tarif réduit », « Enfant », « Tarif habitants », « PMR », « Groupe »…).
+
+Édition et phase (essentiel pour comparer à périmètre égal) :
+- edition = l'année de l'édition à laquelle s'applique la grille AFFICHÉE (une page
+  peut déjà montrer l'édition suivante) ; chaîne vide si inconnue ;
+- phase = phase de prix de la grille retenue : « early bird » (prévente, super early,
+  quotas limités), « normal », « dernière minute » ou « sur place ». Si plusieurs
+  phases sont affichées, retiens le tarif « normal » s'il existe, sinon celui en
+  vente, et mentionne les autres en note."""
 
 _REFINE_URL_SYSTEM = """Tu cherches l'URL DIRECTE de la fiche de vente de billets pour un
 événement précis — concert, ou édition précise d'un festival (pas la page d'accueil d'une
@@ -89,10 +99,11 @@ def extract_prices(
     settings = settings or config.resolve_settings()
     strategy = settings.fetch_strategy
     item.priced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    item.source_url = normalize_url(item.source_url)
 
-    # URL absente, visiblement générique (page d'accueil/portail) ou sur un site
-    # sans prix (streaming, Shazam…) : recherche ciblée de la fiche directe.
-    if _looks_like_generic_url(item.source_url) or _is_non_ticketing(item.source_url):
+    # URL absente, visiblement générique (page d'accueil de billetterie) ou sur
+    # un site sans prix (streaming, Shazam…) : recherche ciblée de la fiche.
+    if _needs_refine(item.source_url, item):
         refined = _refine_source_url(client, item, settings)
         if refined:
             item.notes = _append_note(item.notes, f"URL affinée : {refined}")
@@ -179,11 +190,33 @@ def extract_prices(
 
     item.prices = result.prices
     item.price_confidence = result.price_confidence
+    item.price_phase = normalize_phase(result.phase)
+    _align_edition(item, result.edition)
     if used:
         item.notes = _append_note(item.notes, f"source prix : {used}")
     if result.notes:
         item.notes = _append_note(item.notes, result.notes)
     return item
+
+
+def _align_edition(item: PricedItem, priced_edition: str) -> None:
+    """Rattache un festival à l'édition dont la grille a réellement été lue.
+
+    Constaté : une édition « 2026 » tarifée avec la grille 2027 déjà en ligne.
+    Les prix font foi : on aligne l'édition, et on écarte les dates si elles
+    appartiennent à l'autre édition (en les gardant en note).
+    """
+    if not isinstance(item, Festival):
+        return
+    m = re.search(r"(19|20)\d{2}", priced_edition or "")
+    if not m or (item.edition and m.group(0) in item.edition):
+        return
+    new = m.group(0)
+    item.notes = _append_note(item.notes, f"grille de l'édition {new} (édition trouvée à la découverte : {item.edition or '?'})")
+    if item.date_start and not item.date_start.startswith(new):
+        item.notes = _append_note(item.notes, f"dates de l'autre édition : {item.date_start} → {item.date_end or '?'}")
+        item.date_start = item.date_end = None
+    item.edition = new
 
 
 # --- qualité de l'URL --------------------------------------------------------
@@ -206,6 +239,25 @@ def _is_high_friction(url: Optional[str]) -> bool:
         return False
     host = urlsplit(url).netloc.lower()
     return any(host == d or host.endswith("." + d) for d in config.HIGH_FRICTION_DOMAINS)
+
+
+def _domain_in(url: Optional[str], domains) -> bool:
+    if not url:
+        return False
+    host = urlsplit(url).netloc.lower()
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def _needs_refine(url: Optional[str], item: PricedItem) -> bool:
+    """URL inexploitable telle quelle : absente, sur un site sans prix, ou page
+    d'accueil générique — sauf le site officiel d'un festival, porte d'entrée
+    valable (son lien « Billetterie » est suivi à l'extraction)."""
+    if not url or _is_non_ticketing(url):
+        return True
+    if _looks_like_generic_url(url):
+        official_site = isinstance(item, Festival) and not _domain_in(url, config.TICKETING_PORTAL_DOMAINS)
+        return not official_site
+    return False
 
 
 def _is_non_ticketing(url: Optional[str]) -> bool:
@@ -262,8 +314,8 @@ def _refine_source_url(
     match = re.search(r"https?://\S+", text)
     if not match:
         return None
-    url = match.group(0).rstrip(".,)\"'")
-    return None if (_looks_like_generic_url(url) or _is_non_ticketing(url)) else url
+    url = normalize_url(match.group(0).rstrip(".,)\"'"))
+    return None if _needs_refine(url, item) else url
 
 
 # --- collecte de la page ----------------------------------------------------

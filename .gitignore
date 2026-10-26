@@ -8,6 +8,7 @@ venv/
 
 # Sorties du benchmarker
 out/
+cache/
 *.csv
 *.xlsx
 !examples/*.csv

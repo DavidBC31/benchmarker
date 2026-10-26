@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import queue
+import threading
 from contextlib import nullcontext
 from datetime import date as _date
 from typing import Callable, List, Optional
 
 import anthropic
 
-from . import config
+from . import config, price_cache
+from .analysis import check_grid
+from .comparability import score_concerts, score_festivals
 from .discovery import discover
 from .extraction import extract_prices
 from .festivals import discover_festivals, find_similar_festivals
@@ -20,6 +24,7 @@ from .models import (
     PriceConfidence,
     PricedItem,
     SearchCriteria,
+    coerce_setting,
 )
 from .similar_artists import find_similar_artists
 
@@ -33,15 +38,16 @@ _CONFIDENCE_RANK = {
 
 def _price_priority_key(item: PricedItem) -> tuple:
     """Trie les événements avec prix en premier (meilleure confiance d'abord),
-    puis par proximité avec aujourd'hui (passé récent ou futur proche avant
-    les dates plus éloignées dans le temps) — sans jamais rien supprimer."""
+    puis les plus comparables à la cible, puis par proximité avec aujourd'hui
+    (passé récent ou futur proche avant les dates éloignées) — sans rien supprimer."""
     rank = _CONFIDENCE_RANK.get(item.price_confidence, 0)
+    comparability = item.comparability if item.comparability is not None else 50
     try:
         d = _date.fromisoformat((item.sort_date() or "")[:10])
         recency = abs((d - _date.today()).days)
     except ValueError:
         recency = 10**6  # date absente/non parsable : reléguée en fin de groupe
-    return (-rank, recency)
+    return (-rank, -comparability, recency)
 
 
 def resolve_target_artists(
@@ -66,10 +72,12 @@ def resolve_target_artists(
         update={
             "target_artists": artists,
             "genres": criteria.genres or ([similar.inferred_genre] if similar.inferred_genre else []),
+            "reference_capacity": criteria.reference_capacity or similar.reference_capacity or None,
         }
     )
     genre_note = f" (style détecté : {similar.inferred_genre})" if similar.inferred_genre else ""
-    log(f"Artistes retenus : {', '.join(artists)}{genre_note}")
+    cap_note = f", salles de ~{similar.reference_capacity} places" if similar.reference_capacity else ""
+    log(f"Artistes retenus : {', '.join(artists)}{genre_note}{cap_note}")
     return resolved
 
 
@@ -111,8 +119,9 @@ def build_benchmark(
     if criteria.target_artists and criteria.genres:
         for c in concerts:
             c.genre = c.genre or criteria.genres[0]
+    score_concerts(concerts, criteria)
     if concerts:
-        log(f"{len(concerts)} date(s) trouvée(s).")
+        log(f"{len(concerts)} date(s) trouvée(s).{_profile_summary(concerts)}")
     else:
         log(
             "0 date trouvée. Voir les lignes ci-dessus pour la cause (recherche "
@@ -145,6 +154,12 @@ def resolve_target_festivals(
         update={
             "target_festivals": festivals,
             "genres": criteria.genres or ([similar.inferred_genre] if similar.inferred_genre else []),
+            "reference_capacity": criteria.reference_capacity or similar.reference_capacity or None,
+            "reference_setting": criteria.reference_setting or _setting_or_none(similar.reference_setting),
+            "reference_nights": criteria.reference_nights or similar.reference_nights or None,
+            "reference_artists_per_night": (
+                criteria.reference_artists_per_night or similar.reference_artists_per_night or None
+            ),
         }
     )
     if similar.inferred_profile:
@@ -172,8 +187,9 @@ def build_festival_benchmark(
 
     log(f"Découverte des festivals… (profil : {profile or config.DEFAULT_PROFILE})")
     festivals = discover_festivals(client, criteria, settings, progress=log)
+    score_festivals(festivals, criteria)
     if festivals:
-        log(f"{len(festivals)} festival(s) trouvé(s).")
+        log(f"{len(festivals)} festival(s) trouvé(s).{_profile_summary(festivals)}")
     else:
         log(
             "0 festival trouvé. Voir les lignes ci-dessus pour la cause ; sinon, "
@@ -194,27 +210,91 @@ def _extract_all(
 ) -> None:
     """Extrait les prix de chaque événement (in place), puis les réordonne.
 
-    Un unique `PageRenderer` est partagé sur tous les événements. Une erreur
-    fatale (crédits, auth) stoppe la boucle en conservant l'acquis ; une
-    erreur ponctuelle est notée sur l'événement concerné.
+    - `EXTRACTION_WORKERS` événements en parallèle, chacun avec son propre
+      navigateur (l'API Playwright n'est pas partageable entre fils) ;
+    - grilles déjà extraites récemment reprises de la mémoire (`price_cache`) ;
+    - incohérences de chaque grille signalées (`check_grid`) ;
+    - une erreur fatale (crédits, auth) arrête tout en conservant l'acquis ; une
+      erreur ponctuelle est notée sur l'événement concerné.
     """
-    with _renderer_for(settings.fetch_strategy, log) as renderer:
-        for i, item in enumerate(items, start=1):
-            log(f"[{i}/{len(items)}] Extraction prix ({settings.fetch_strategy}) : {item.short_label()}")
+    pending: "queue.Queue[PricedItem]" = queue.Queue()
+    for item in items:
+        pending.put(item)
+    stop = threading.Event()
+    lock = threading.Lock()
+    progress = {"n": 0, "done": 0, "cached": 0}
+    total = len(items)
+
+    def next_index() -> int:
+        with lock:
+            progress["n"] += 1
+            return progress["n"]
+
+    def worker() -> None:
+        try:
+            with _renderer_for(settings.fetch_strategy, log) as renderer:
+                while not stop.is_set():
+                    try:
+                        item = pending.get_nowait()
+                    except queue.Empty:
+                        return
+                    _extract_one(item, renderer, next_index())
+        except Exception as exc:  # noqa: BLE001 — ex. navigateur impossible à lancer
+            log(f"  ! fil d'extraction interrompu ({exc})")
+
+    def _extract_one(item: PricedItem, renderer, i: int) -> None:
+        key = price_cache.cache_key(item)
+        cached = price_cache.load(key)
+        if cached:
+            price_cache.apply(item, cached)
+            log(f"[{i}/{total}] Grille en mémoire : {item.short_label()}")
+            with lock:
+                progress["cached"] += 1
+        else:
+            log(f"[{i}/{total}] Extraction prix ({settings.fetch_strategy}) : {item.short_label()}")
             try:
                 extract_prices(client, item, settings=settings, renderer=renderer)
+                price_cache.store(key, item)
             except Exception as exc:  # noqa: BLE001
                 if _is_fatal(exc):
-                    log(f"Arrêt : erreur fatale ({exc}). "
-                        f"{i - 1}/{len(items)} événement(s) traité(s), résultats conservés.")
-                    break
+                    stop.set()
+                    log(f"Arrêt : erreur fatale ({exc}). Résultats déjà collectés conservés.")
+                    return
                 log(f"  ! événement ignoré ({exc})")
                 item.notes = _append_note(item.notes, f"extraction échouée : {exc}")
+        item.anomalies = check_grid(item)
+        with lock:
+            progress["done"] += 1
+
+    n_workers = max(1, min(config.EXTRACTION_WORKERS, total))
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(n_workers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if progress["cached"]:
+        log(f"{progress['cached']} grille(s) reprise(s) de la mémoire (aucun coût).")
+    if stop.is_set():
+        log(f"{progress['done']}/{total} événement(s) traité(s) avant l'arrêt.")
 
     # Fait ressortir en priorité les événements avec un vrai prix exploitable
-    # (rien n'est supprimé, juste réordonné) : à confiance égale, les plus
-    # proches d'aujourd'hui passent avant les plus éloignés dans le temps.
+    # (rien n'est supprimé, juste réordonné).
     items.sort(key=_price_priority_key)
+
+
+def _profile_summary(items: List[PricedItem]) -> str:
+    scored = [i.comparability for i in items if i.comparability is not None]
+    if not scored:
+        return ""
+    out = sum(1 for s in scored if s < config.COMPARABILITY_MIN)
+    return f" Comparabilité médiane : {sorted(scored)[len(scored) // 2]}/100" + (
+        f", {out} hors profil (affichés, exclus des statistiques)." if out else "."
+    )
+
+
+def _setting_or_none(value: Optional[str]) -> Optional[str]:
+    setting = coerce_setting(value)
+    return None if setting.value == "inconnu" else setting.value
 
 
 def _is_fatal(exc: Exception) -> bool:

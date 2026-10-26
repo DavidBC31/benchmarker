@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # --- Modèles LLM (par rôle, pour maîtriser le coût) -------------------------
 # Chaque étape utilise le modèle le moins cher qui fait bien le travail :
@@ -146,6 +149,17 @@ HIGH_FRICTION_DOMAINS = [
     "gimstour.com",
 ]
 
+# Plateformes de billetterie / agrégateurs : leur page d'accueil n'est jamais
+# une fiche événement. À l'inverse, la page d'accueil du site officiel d'un
+# festival est une bonne porte d'entrée (lien « Billetterie » à suivre) — elle
+# ne doit pas être rejetée comme « générique » (constaté : le festival de
+# référence lui-même finissait sans URL ni prix).
+TICKETING_PORTAL_DOMAINS = sorted(
+    {d for d in PREFERRED_SOURCES_FR + FESTIVAL_TICKETING_SOURCES + SECONDARY_PRICE_SOURCES_FR
+     + HIGH_FRICTION_DOMAINS if "." in d}
+    | {"eventim.fr", "festik.net", "helloasso.com", "francebillet.com", "placeminute.com", "sortiraparis.com"}
+)
+
 # --- Rendu navigateur (Playwright) -----------------------------------------
 # Stratégie d'extraction des prix :
 #   "playwright" : rendu navigateur local (GRATUIT) + 1 structuration bon marché.
@@ -274,6 +288,26 @@ def resolve_settings(profile: str | None = None, strategy: str | None = None) ->
         s.fetch_strategy = strategy
     return s
 
+
+# --- Efficience : extraction parallèle et mémoire des grilles ----------------
+# Nombre d'événements extraits en parallèle (un navigateur headless par fil,
+# quelques centaines de Mo chacun). Même coût API, durée divisée d'autant.
+EXTRACTION_WORKERS = int(os.environ.get("BENCHMARKER_EXTRACTION_WORKERS", "3"))
+# Grilles mémorisées par événement : un run relancé ne repaie pas les mêmes
+# pages et rend le même résultat. Échecs gardés moins longtemps (un blocage
+# peut n'être que passager).
+CACHE_DIR = Path(os.environ.get("BENCHMARKER_CACHE_DIR") or (PROJECT_ROOT / "cache" / "prices"))
+PRICE_CACHE_TTL_DAYS = float(os.environ.get("BENCHMARKER_PRICE_CACHE_TTL_DAYS", "7"))
+PRICE_CACHE_FAIL_TTL_HOURS = float(os.environ.get("BENCHMARKER_PRICE_CACHE_FAIL_TTL_HOURS", "24"))
+
+# --- Justesse des statistiques ---------------------------------------------
+# Prix plein tarif en dessous de ce seuil : erreur ou tarif enfant non nommé
+# (constaté : un « Pass enfant » à 3 € tirait le minimum global) -> écarté des
+# stats et signalé.
+MIN_PLAUSIBLE_PRICE_EUR = float(os.environ.get("BENCHMARKER_MIN_PLAUSIBLE_PRICE_EUR", "5"))
+# Score de comparabilité (0-100) sous lequel un événement est « hors profil » :
+# affiché, mais écarté des statistiques et de la préconisation.
+COMPARABILITY_MIN = int(os.environ.get("BENCHMARKER_COMPARABILITY_MIN", "40"))
 
 # Devise de référence pour la normalisation.
 BASE_CURRENCY = "EUR"

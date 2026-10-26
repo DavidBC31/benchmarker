@@ -255,6 +255,14 @@
   .check-group { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; min-height: 44px; }
   .field-hint { font-weight: 400; }
   #run-area { display: none; flex-direction: column; gap: 20px; margin-top: 20px; }
+  .cmp { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 9999px; white-space: nowrap; cursor: help; }
+  .cmp-hi { background: rgba(52, 199, 89, 0.14); color: #1d7a34; }
+  .cmp-mid { background: rgba(255, 149, 0, 0.14); color: #9a5c00; }
+  .cmp-out { background: rgba(134, 134, 139, 0.14); color: var(--apple-text-secondary); }
+  .warn-mark { color: var(--apple-orange); font-weight: 700; cursor: help; margin-left: 4px; }
+  .est { cursor: help; border-bottom: 1px dotted currentColor; }
+  .notice { font-size: 12px; color: var(--apple-text-secondary); margin: 10px 0 0; }
+  .notice.alert { color: #9a5c00; }
 
   @media (max-width: 720px) {
     nav.pillbar { flex-wrap: wrap; border-radius: 24px; padding: 10px; }
@@ -418,6 +426,7 @@
       <div class="row" id="downloads" style="margin-top:0"></div>
       <h3>Synthèse</h3>
       <div class="tiles" id="tiles"></div>
+      <div id="exclusions"></div>
       <div id="stats-tables"></div>
       <h3 id="detail-title">Détail</h3>
       <div class="tblwrap"><table id="rows-table"></table></div>
@@ -456,6 +465,7 @@
 const $ = (id) => document.getElementById(id);
 const VIEW_OF = {artist: "artiste", festival: "festival"};
 const SETTING_LABEL = {urbain: "Urbain", periurbain: "Périurbain", rural: "Rural", inconnu: "—"};
+const COMPARABILITY_MIN = {{ comparability_min }};
 // Mode ("artist"/"festival") du run affiché dans la zone partagée : elle n'est
 // visible que dans l'onglet correspondant.
 let currentJob = null, poll = null, displayedMode = null;
@@ -563,44 +573,77 @@ function statsTable(title, firstCol, obj) {
     entries.map(([c,v]) => `<tr><td>${esc(c)}</td><td>${v.count}</td><td>${v.min}</td><td>${v.mean}</td><td>${v.median}</td><td>${v.max}</td></tr>`).join("") +
     `</table></div>`;
 }
-function confCell(r) { return `<td><span class="conf c-${esc(r.price_confidence)}">${esc(r.price_confidence)}</span></td>`; }
+function confCell(r) {
+  const warn = (r.anomalies || []).length
+    ? `<span class="warn-mark" title="${esc(r.anomalies.join(' · '))}">⚠</span>` : "";
+  return `<td><span class="conf c-${esc(r.price_confidence)}">${esc(r.price_confidence)}</span>${warn}</td>`;
+}
+function compCell(r) {
+  if (r.comparability == null) return `<td>${dash}</td>`;
+  const v = r.comparability;
+  const cls = v >= 70 ? "cmp-hi" : v >= COMPARABILITY_MIN ? "cmp-mid" : "cmp-out";
+  const label = v < COMPARABILITY_MIN ? `${v} · hors profil` : `${v}`;
+  return `<td><span class="cmp ${cls}" title="${esc(r.comparability_detail)}">${label}</span></td>`;
+}
+// Valeur estimée (non lue telle quelle) : préfixe ≈ et info-bulle.
+function maybeEstimated(r, field, html) {
+  if (!html) return "";
+  return (r.estimated_fields || []).includes(field)
+    ? `<span class="est" title="valeur estimée">≈ ${html}</span>` : html;
+}
+function phaseCell(r) { return `<td>${r.price_phase ? esc(r.price_phase) : ""}</td>`; }
+function exclusionsNotice(s) {
+  const x = s.exclusions || {};
+  const parts = [];
+  if (x.tarifs_reduits_ou_options) parts.push(`${x.tarifs_reduits_ou_options} tarif(s) réduit(s)/spécifique(s)/options`);
+  if (x.prix_aberrants) parts.push(`${x.prix_aberrants} prix aberrant(s)`);
+  if (x.evenements_hors_profil && !x.profil_relache) parts.push(`${x.evenements_hors_profil} événement(s) hors profil`);
+  if (x.grilles_dupliquees) parts.push(`${x.grilles_dupliquees} grille(s) dupliquée(s)`);
+  let html = parts.length ? `<p class="notice">Statistiques au plein tarif, une valeur par événement. Écartés : ${parts.join(", ")}.</p>` : "";
+  if (x.profil_relache) html += `<p class="notice alert">⚠ Moins de 2 événements tarifés dans le profil : statistiques calculées sur tous les événements, dont ${x.evenements_hors_profil} hors profil.</p>`;
+  $("exclusions").innerHTML = html;
+}
 function noteCell(r) { return `<td class="wrap meta" title="${esc(r.notes)}">${esc(r.notes)}</td>`; }
 
 function renderResults(s, rows, mode) {
   const g = s.global || {};
+  exclusionsNotice(s);
   if (mode === "festival") {
     const pj = s.prix_par_jour || {}, pa = s.prix_par_artiste || {};
     tiles([["Festivals", s.festivals_trouves], ["Tarifs", s.tarifs_collectes],
-           ["Prix / jour méd. €", pj.median], ["Prix / artiste méd. €", pa.median],
-           ["Min €", g.min], ["Max €", g.max]]);
+           ["Prix / jour méd. €", pj.median],
+           s.prix_par_artiste_fiable ? ["Prix / artiste méd. €", pa.median] : ["Prix / artiste (base &lt; 3)", "–"],
+           ["Min pass €", g.min], ["Max pass €", g.max]]);
     const settingLabels = Object.fromEntries(Object.entries(s.par_cadre || {}).map(([k,v]) => [SETTING_LABEL[k] || k, v]));
     $("stats-tables").innerHTML =
       statsTable("Par type de pass (EUR)", "Type de pass", s.par_categorie) +
       statsTable("Prix par jour selon le cadre (EUR)", "Cadre", settingLabels) +
-      statsTable("Prix par jour selon la jauge (EUR)", "Jauge", s.par_jauge);
+      statsTable("Prix par jour selon la jauge (EUR)", "Jauge", s.par_jauge) +
+      statsTable("Prix par jour selon la phase de prix (EUR)", "Phase", s.par_phase);
     $("detail-title").textContent = "Détail des festivals";
-    let html = `<tr><th>Festival</th><th>Édition</th><th>Dates</th><th>Ville</th><th>Cadre</th><th>Jauge/jour</th><th>Soirs</th><th>Artistes/soir</th><th>Programmation</th><th>Têtes d'affiche</th><th>Prix</th><th>Confiance</th><th>Note</th></tr>`;
+    let html = `<tr><th>Festival</th><th>Comparabilité</th><th>Édition</th><th>Dates</th><th>Ville</th><th>Cadre</th><th>Jauge/jour</th><th>Soirs</th><th>Artistes/soir</th><th>Programmation</th><th>Têtes d'affiche</th><th>Prix</th><th>Phase</th><th>Confiance</th><th>Note</th></tr>`;
     html += (rows||[]).map(r => `<tr>
-      <td>${esc(r.festival)}</td><td>${esc(r.edition)}</td>
+      <td>${esc(r.festival)}</td>${compCell(r)}<td>${esc(r.edition)}</td>
       <td>${esc(r.date_start)}${r.date_end && r.date_end !== r.date_start ? " → " + esc(r.date_end) : ""}</td>
       <td>${esc(r.city)}</td>
       <td>${r.setting && r.setting !== "inconnu" ? `<span class="chip-setting">${esc(SETTING_LABEL[r.setting] || r.setting)}</span>` : dash}</td>
-      <td>${r.capacity ? `<span class="chip-capacity">${r.capacity}</span>` : ""}</td>
-      <td>${r.nb_nights ?? ""}</td><td>${r.artists_per_night ?? ""}</td>
+      <td>${maybeEstimated(r, "capacity", r.capacity ? `<span class="chip-capacity">${r.capacity}</span>` : "")}</td>
+      <td>${r.nb_nights ?? ""}</td><td>${maybeEstimated(r, "artists_per_night", r.artists_per_night ?? "")}</td>
       <td class="wrap">${esc(r.genres)}</td><td class="wrap">${esc(r.headliners)}</td>
-      <td class="wrap prices">${esc(r.prices) || dash}</td>${confCell(r)}${noteCell(r)}</tr>`).join("");
+      <td class="wrap prices">${esc(r.prices) || dash}</td>${phaseCell(r)}${confCell(r)}${noteCell(r)}</tr>`).join("");
     $("rows-table").innerHTML = html;
     return;
   }
+  const pe = s.prix_entree || {};
   tiles([["Dates", s.dates_trouvees], ["Tarifs", s.tarifs_collectes],
-         ["Min €", g.min], ["Moyenne €", g.mean], ["Médiane €", g.median], ["Max €", g.max]]);
+         ["Prix d'entrée méd. €", pe.median], ["Min €", g.min], ["Médiane €", g.median], ["Max €", g.max]]);
   $("stats-tables").innerHTML = statsTable("Par catégorie (EUR)", "Catégorie", s.par_categorie);
   $("detail-title").textContent = "Détail des dates";
-  let html = `<tr><th>Artiste</th><th>Date</th><th>Lieu</th><th>Ville</th><th>Jauge</th><th>Prix</th><th>Confiance</th><th>Note</th></tr>`;
+  let html = `<tr><th>Artiste</th><th>Comparabilité</th><th>Date</th><th>Lieu</th><th>Ville</th><th>Jauge</th><th>Prix</th><th>Phase</th><th>Confiance</th><th>Note</th></tr>`;
   html += (rows||[]).map(r => `<tr>
-    <td>${esc(r.artist)}</td><td>${esc(r.date)}</td><td class="wrap">${esc(r.venue)}</td>
-    <td>${esc(r.city)}</td><td>${r.capacity ? `<span class="chip-capacity">${r.capacity}</span>` : ""}</td>
-    <td class="wrap">${esc(r.prices) || dash}</td>${confCell(r)}${noteCell(r)}</tr>`).join("");
+    <td>${esc(r.artist)}</td>${compCell(r)}<td>${esc(r.date)}</td><td class="wrap">${esc(r.venue)}</td>
+    <td>${esc(r.city)}</td><td>${maybeEstimated(r, "capacity", r.capacity ? `<span class="chip-capacity">${r.capacity}</span>` : "")}</td>
+    <td class="wrap prices">${esc(r.prices) || dash}</td>${phaseCell(r)}${confCell(r)}${noteCell(r)}</tr>`).join("");
   $("rows-table").innerHTML = html;
 }
 
@@ -619,9 +662,15 @@ $("reco-btn").addEventListener("click", async () => {
   const firstCol = displayedMode === "festival" ? "Type de pass" : "Catégorie";
   const sampleLabel = displayedMode === "festival" ? "festivals comparables" : "échantillon";
   let html = `<p class="meta">Filtres : ${esc((r.filtres_appliques||[]).join(", "))} · ${sampleLabel} : ${r.taille_echantillon}</p>`;
+  if ((r.filtres_ignores || []).length) html += `<p class="meta">Filtres ignorés : ${esc(r.filtres_ignores.join(", "))}</p>`;
+  for (const w of [r.avertissement_profil, r.avertissement_phase].filter(Boolean)) html += `<p class="notice alert">⚠ ${esc(w)}</p>`;
   html += `<div class="tblwrap" style="margin-top:10px"><table><tr><th>${firstCol}</th><th>N</th><th>Fourchette (EUR)</th><th>Médiane</th></tr>` +
     Object.entries(per).map(([c,v]) => `<tr><td>${esc(c)}</td><td>${v.n}</td><td>${v.fourchette_recommandee[0]} – ${v.fourchette_recommandee[1]}</td><td>${v.median}</td></tr>`).join("") +
     `</table></div>`;
+  if (displayedMode !== "festival" && r.prix_entree) {
+    const v = r.prix_entree;
+    html += `<div class="tiles" style="margin-top:14px"><div class="tile"><div class="v">${v.median} €</div><div class="k">Prix d'entrée (catégorie la moins chère)<br>${v.fourchette_recommandee[0]} – ${v.fourchette_recommandee[1]} €</div></div></div>`;
+  }
   if (displayedMode === "festival") {
     const extras = [["prix_par_jour", "Prix par jour de référence"],
                     ["pass_tous_soirs_estime", "Pass tous soirs (estimation)"],
