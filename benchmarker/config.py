@@ -96,6 +96,17 @@ PREFERRED_SOURCES_FR = [
     "weezevent.com",
 ]
 
+# Sites qui n'affichent jamais de prix de billets (streaming, réseaux sociaux,
+# agendas de type Shazam/Songkick…) : une URL sur ces domaines est traitée
+# comme une URL absente (nouvelle recherche ciblée) plutôt que d'être rendue —
+# constaté en conditions réelles : une page Shazam retenue comme "billetterie".
+NON_TICKETING_DOMAINS = [
+    "shazam.com", "songkick.com", "bandsintown.com", "spotify.com", "deezer.com",
+    "music.apple.com", "youtube.com", "youtu.be", "soundcloud.com", "genius.com",
+    "wikipedia.org", "instagram.com", "facebook.com", "x.com", "twitter.com",
+    "tiktok.com", "linkedin.com",
+]
+
 # Billetteries couramment utilisées par les festivals (indice pour la
 # découverte ; le site officiel du festival reste la source n°1 des grilles
 # de pass, souvent publiées en clair sur une page « billetterie / tarifs »).

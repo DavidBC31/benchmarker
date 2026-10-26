@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import glob
 import os
+import re
+import unicodedata
 from typing import Optional
 
 from . import config
@@ -92,7 +94,15 @@ class PageRenderer:
 
     # --- rendu --------------------------------------------------------------
     def render(self, url: str) -> str:
-        """Rend une URL et renvoie le texte visible (plafonné).
+        """Rend une URL et renvoie le texte visible (plafonné)."""
+        return self.render_with_links(url)[0]
+
+    def render_with_links(self, url: str) -> tuple[str, list[str]]:
+        """Rend une URL et renvoie (texte visible plafonné, liens de réservation).
+
+        Les liens de réservation (« Réserver », « Billetterie »…) servent quand
+        la page est une vitrine (salle, organisateur) dont la grille tarifaire
+        n'apparaît qu'une fois sur la billetterie liée.
 
         Retente une fois sur une erreur réseau/protocole (ex.
         ERR_HTTP2_PROTOCOL_ERROR, connexion coupée par une protection anti-bot
@@ -126,9 +136,11 @@ class PageRenderer:
                     page.wait_for_load_state("networkidle", timeout=config.RENDER_IDLE_MS)
                 except Exception:
                     pass  # networkidle peut ne jamais arriver (trackers) — pas bloquant
+                # Collectés AVANT le clic de révélation, qui peut faire naviguer.
+                links = _booking_links(page, url)
                 self._reveal_price_widget(page)
                 text = page.inner_text("body")
-                return text[: self.text_cap]
+                return text[: self.text_cap], links
             except Exception as exc:
                 last_exc = exc
                 is_network_error = "net::" in str(exc)
@@ -166,6 +178,42 @@ class PageRenderer:
                     return
             except Exception:
                 continue
+
+
+_BOOKING_LINKS_JS = """
+() => [...document.querySelectorAll('a[href]')].map(a => ({
+  href: a.href,
+  label: (a.innerText || a.getAttribute('aria-label') || a.title || '').trim().slice(0, 80),
+}))
+"""
+_BOOKING_LABEL_RE = re.compile(r"reserv|billet|ticket|acheter|achat|\bbook", re.I)
+
+
+def _strip_accents(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+
+
+def _booking_links(page, current_url: str, limit: int = 3) -> list[str]:
+    """Liens de réservation de la page, libellés explicites d'abord (best effort)."""
+    try:
+        anchors = page.evaluate(_BOOKING_LINKS_JS)
+    except Exception:
+        return []
+    current = current_url.split("#")[0].rstrip("/")
+    by_label, by_href = [], []
+    for a in anchors:
+        href = (a.get("href") or "").split("#")[0]
+        if not href.startswith(("http://", "https://")) or href.rstrip("/") == current:
+            continue
+        if _BOOKING_LABEL_RE.search(_strip_accents(a.get("label") or "")):
+            by_label.append(href)
+        elif _BOOKING_LABEL_RE.search(href):
+            by_href.append(href)
+    out: list[str] = []
+    for href in by_label + by_href:
+        if href not in out:
+            out.append(href)
+    return out[:limit]
 
 
 def render_page(url: str, **kwargs) -> str:

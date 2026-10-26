@@ -105,6 +105,12 @@ def build_benchmark(
 
     log(f"Découverte des dates… (profil : {profile or config.DEFAULT_PROFILE})")
     concerts = discover(client, criteria, settings, progress=log)
+    # Avec des artistes ciblés, tous partagent par construction le style de
+    # l'artiste de référence : on le reporte là où la découverte l'a laissé
+    # vide (sinon le filtre par style de la préconisation les ignore).
+    if criteria.target_artists and criteria.genres:
+        for c in concerts:
+            c.genre = c.genre or criteria.genres[0]
     if concerts:
         log(f"{len(concerts)} date(s) trouvée(s).")
     else:

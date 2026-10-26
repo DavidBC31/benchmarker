@@ -68,9 +68,12 @@ Tu produiras une liste de dates candidates ; l'extraction des prix se fait dans 
 
 _DISCOVERY_INSTRUCTION = """À partir des résultats de recherche ci-dessous, produis la liste
 structurée des dates de concerts trouvées. Pour chaque date, renseigne au maximum :
-artiste, date (ISO), salle, ville, pays, jauge si connue, style, nature de l'événement,
+artiste, date (ISO), salle, ville, pays, jauge, style, nature de l'événement,
 et l'URL de billetterie si elle apparaît dans les résultats (laisse vide sinon —
 ne pas essayer de la deviner ou de la reconstruire).
+Jauge : capacité de la salle. Si elle n'apparaît pas dans les résultats mais que la
+salle est connue (Accor Arena, un Zénith, une Arena…), indique sa capacité habituelle
+approximative — c'est un critère clé de comparaison du benchmark.
 IMPORTANT : inclus TOUTES les dates confirmées dans les résultats de recherche
 ci-dessous, même celles sans URL. Ne rejette une date que si elle est hors
 critères ou si elle est un doublon.

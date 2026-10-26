@@ -50,6 +50,8 @@ _REFINE_URL_SYSTEM = """Tu cherches l'URL DIRECTE de la fiche de vente de billet
 événement précis — concert, ou édition précise d'un festival (pas la page d'accueil d'une
 billetterie, pas un portail d'événements, pas une page de recherche ou de liste). Pour un
 festival, la page billetterie / tarifs de son site officiel convient parfaitement.
+Jamais une page de streaming, de réseau social ou d'agenda musical (Shazam, Songkick,
+Bandsintown, Spotify, YouTube…) : elles n'affichent aucun prix.
 
 Réponds STRICTEMENT par :
 - l'URL trouvée (et rien d'autre), si tu es raisonnablement sûr qu'elle correspond
@@ -88,9 +90,9 @@ def extract_prices(
     strategy = settings.fetch_strategy
     item.priced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    # URL absente ou visiblement générique (page d'accueil/portail) : on tente
-    # une recherche ciblée pour retrouver la fiche directe avant d'abandonner.
-    if _looks_like_generic_url(item.source_url):
+    # URL absente, visiblement générique (page d'accueil/portail) ou sur un site
+    # sans prix (streaming, Shazam…) : recherche ciblée de la fiche directe.
+    if _looks_like_generic_url(item.source_url) or _is_non_ticketing(item.source_url):
         refined = _refine_source_url(client, item, settings)
         if refined:
             item.notes = _append_note(item.notes, f"URL affinée : {refined}")
@@ -125,7 +127,7 @@ def extract_prices(
     # 1) Playwright d'abord (rendu local GRATUIT) pour "playwright" et "auto".
     #    Seule la structuration coûte, et une seule fois.
     if strategy in ("playwright", "auto"):
-        rendered, err = _gather_via_playwright(item.source_url, renderer)
+        rendered, err, links = _gather_via_playwright(item.source_url, renderer)
         if rendered:
             result = _structure(client, rendered, settings.structure_model)
             used = "playwright"
@@ -133,6 +135,25 @@ def extract_prices(
             # Notée même en mode "auto" (avant : silencieuse) pour pouvoir
             # diagnostiquer un souci de rendu sans devoir forcer la stratégie.
             item.notes = _append_note(item.notes, f"playwright : {err}")
+
+        # Page vitrine (salle, organisateur) sans grille : les prix sont derrière
+        # le lien « Réserver ». On suit le premier lien de réservation exploitable
+        # (un seul, coût maîtrisé : rendu gratuit + une structuration).
+        if not _is_sufficient(result):
+            link = next(
+                (l for l in links if not _is_high_friction(l) and not _is_non_ticketing(l)),
+                None,
+            )
+            if link:
+                text2, err2, _ = _gather_via_playwright(link, renderer)
+                if text2:
+                    candidate = _structure(client, text2, settings.structure_model)
+                    if _is_better(candidate, result):
+                        result, used = candidate, "playwright (lien de réservation)"
+                        item.notes = _append_note(item.notes, f"lien de réservation suivi : {link}")
+                        item.source_url = link
+                else:
+                    item.notes = _append_note(item.notes, f"lien de réservation {link} : {err2}")
 
     # 2) web_fetch (LLM, coûteux) : stratégie dédiée, ou fallback "auto"
     #    UNIQUEMENT si le rendu gratuit n'a pas donné de grille suffisante.
@@ -187,6 +208,14 @@ def _is_high_friction(url: Optional[str]) -> bool:
     return any(host == d or host.endswith("." + d) for d in config.HIGH_FRICTION_DOMAINS)
 
 
+def _is_non_ticketing(url: Optional[str]) -> bool:
+    """Domaine qui n'affiche jamais de prix de billets (streaming, Shazam…)."""
+    if not url:
+        return False
+    host = urlsplit(url).netloc.lower()
+    return any(host == d or host.endswith("." + d) for d in config.NON_TICKETING_DOMAINS)
+
+
 def _refine_source_url(
     client: anthropic.Anthropic,
     item: PricedItem,
@@ -234,7 +263,7 @@ def _refine_source_url(
     if not match:
         return None
     url = match.group(0).rstrip(".,)\"'")
-    return None if _looks_like_generic_url(url) else url
+    return None if (_looks_like_generic_url(url) or _is_non_ticketing(url)) else url
 
 
 # --- collecte de la page ----------------------------------------------------
@@ -267,22 +296,22 @@ def _gather_via_web_fetch(
 
 def _gather_via_playwright(
     url: str, renderer
-) -> tuple[Optional[str], Optional[str]]:
-    """Rend la page avec Chromium. Renvoie (texte, erreur).
+) -> tuple[Optional[str], Optional[str], list[str]]:
+    """Rend la page avec Chromium. Renvoie (texte, erreur, liens de réservation).
 
     Si un `renderer` (PageRenderer) est fourni, il est réutilisé ; sinon on
-    ouvre un navigateur dédié le temps de la page.
+    ouvre un navigateur dédié le temps de la page (sans collecte de liens).
     """
     try:
         if renderer is not None:
-            text = renderer.render(url)
+            text, links = renderer.render_with_links(url)
         else:
             from .browser import render_page
 
-            text = render_page(url)
-        return (text or None), (None if text else "rendu vide")
+            text, links = render_page(url), []
+        return (text or None), (None if text else "rendu vide"), links
     except Exception as exc:
-        return None, str(exc)
+        return None, str(exc), []
 
 
 # --- structuration ----------------------------------------------------------
