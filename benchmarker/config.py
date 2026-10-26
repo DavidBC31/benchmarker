@@ -300,6 +300,14 @@ CACHE_DIR = Path(os.environ.get("BENCHMARKER_CACHE_DIR") or (PROJECT_ROOT / "cac
 PRICE_CACHE_TTL_DAYS = float(os.environ.get("BENCHMARKER_PRICE_CACHE_TTL_DAYS", "7"))
 PRICE_CACHE_FAIL_TTL_HOURS = float(os.environ.get("BENCHMARKER_PRICE_CACHE_FAIL_TTL_HOURS", "24"))
 
+# --- Base de référence (mémoire cumulative) ---------------------------------
+# Chaque run y enregistre ses événements tarifés ; les suivants y puisent les
+# événements déjà connus dans le profil (sans repayer leur extraction), et la
+# préconisation peut s'appuyer sur toute la base.
+BASE_PATH = Path(os.environ.get("BENCHMARKER_BASE_PATH") or (PROJECT_ROOT / "data" / "reference.sqlite"))
+# Âge maximal d'une grille en base pour être reprise dans un nouveau run.
+BASE_MAX_AGE_DAYS = int(os.environ.get("BENCHMARKER_BASE_MAX_AGE_DAYS", "365"))
+
 # --- Justesse des statistiques ---------------------------------------------
 # Prix plein tarif en dessous de ce seuil : erreur ou tarif enfant non nommé
 # (constaté : un « Pass enfant » à 3 € tirait le minimum global) -> écarté des

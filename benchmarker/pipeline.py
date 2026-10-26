@@ -10,7 +10,7 @@ from typing import Callable, List, Optional
 
 import anthropic
 
-from . import config, price_cache
+from . import config, knowledge, price_cache
 from .analysis import check_grid
 from .comparability import score_concerts, score_festivals
 from .discovery import discover
@@ -120,9 +120,10 @@ def build_benchmark(
         for c in concerts:
             c.genre = c.genre or criteria.genres[0]
     score_concerts(concerts, criteria)
+    known = _from_base(criteria, concerts, log)
     if concerts:
         log(f"{len(concerts)} date(s) trouvée(s).{_profile_summary(concerts)}")
-    else:
+    elif not known:
         log(
             "0 date trouvée. Voir les lignes ci-dessus pour la cause (recherche "
             "vide vs structuration vide) ; sinon, essaie des critères moins "
@@ -130,11 +131,10 @@ def build_benchmark(
         )
         return concerts
 
-    if not with_prices:
-        return concerts
-
-    _extract_all(client, concerts, settings, log)
-    return concerts
+    if with_prices and concerts:
+        _extract_all(client, concerts, settings, log)
+        _record(concerts, log)
+    return _combine(concerts, known)
 
 
 def resolve_target_festivals(
@@ -188,18 +188,20 @@ def build_festival_benchmark(
     log(f"Découverte des festivals… (profil : {profile or config.DEFAULT_PROFILE})")
     festivals = discover_festivals(client, criteria, settings, progress=log)
     score_festivals(festivals, criteria)
+    known = _from_base(criteria, festivals, log)
     if festivals:
         log(f"{len(festivals)} festival(s) trouvé(s).{_profile_summary(festivals)}")
-    else:
+    elif not known:
         log(
             "0 festival trouvé. Voir les lignes ci-dessus pour la cause ; sinon, "
             "essaie des critères moins restrictifs ou le profil 'equilibre'."
         )
         return festivals
 
-    if with_prices:
+    if with_prices and festivals:
         _extract_all(client, festivals, settings, log)
-    return festivals
+        _record(festivals, log)
+    return _combine(festivals, known)
 
 
 def _extract_all(
@@ -280,6 +282,38 @@ def _extract_all(
     # Fait ressortir en priorité les événements avec un vrai prix exploitable
     # (rien n'est supprimé, juste réordonné).
     items.sort(key=_price_priority_key)
+
+
+def _from_base(criteria, discovered: List[PricedItem], log: Callable[[str], None]) -> List[PricedItem]:
+    """Événements déjà connus de la base de référence à ajouter au run.
+    Une base indisponible ne doit jamais faire échouer un run."""
+    try:
+        return knowledge.matching_events(
+            criteria, exclude_ids={price_cache.cache_key(i) for i in discovered}, log=log
+        )
+    except Exception as exc:  # noqa: BLE001
+        log(f"  ! base de référence indisponible ({exc}) — run sans la mémoire.")
+        return []
+
+
+def _record(items: List[PricedItem], log: Callable[[str], None]) -> None:
+    """Enregistre les événements tarifés du run dans la base de référence."""
+    try:
+        c = knowledge.record(items, source=f"run du {_date.today().isoformat()}")
+    except Exception as exc:  # noqa: BLE001
+        log(f"  ! enregistrement dans la base de référence impossible ({exc}).")
+        return
+    if c["ajouts"] or c["mises_a_jour"]:
+        log(f"Base de référence : {c['ajouts']} ajout(s), {c['mises_a_jour']} mise(s) à jour.")
+
+
+def _combine(run_items: List[PricedItem], known: List[PricedItem]) -> List[PricedItem]:
+    """Événements du run + événements de la base qui ne font pas doublon
+    (l'identité d'un festival peut changer à l'extraction : édition réalignée)."""
+    seen = {price_cache.cache_key(i) for i in run_items}
+    combined = run_items + [k for k in known if price_cache.cache_key(k) not in seen]
+    combined.sort(key=_price_priority_key)
+    return combined
 
 
 def _profile_summary(items: List[PricedItem]) -> str:

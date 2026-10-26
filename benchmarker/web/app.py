@@ -39,7 +39,7 @@ from flask import (
     url_for,
 )
 
-from .. import analysis, config
+from .. import analysis, config, knowledge
 from ..llm import build_client
 from ..models import SETTING_LABELS, Concert, Festival, FestivalCriteria, SearchCriteria
 from ..pipeline import (
@@ -48,6 +48,7 @@ from ..pipeline import (
     resolve_target_artists,
     resolve_target_festivals,
 )
+from ..price_cache import cache_key
 from ..recommend import recommend, recommend_festival
 
 # Ancré à la racine du projet (et non au cwd du process, qui varie selon la
@@ -86,6 +87,14 @@ def create_app() -> Flask:
     app.json.sort_keys = False
     app.secret_key = os.environ.get("BENCHMARKER_SECRET_KEY") or os.urandom(24).hex()
     auth_token = os.environ.get("BENCHMARKER_AUTH_TOKEN")
+
+    # Première mise en route de la base de référence : import des runs passés.
+    try:
+        seeded = knowledge.seed_from_history(OUT_DIR)
+        if seeded:
+            print(f"Base de référence créée depuis l'historique : {seeded}", flush=True)
+    except Exception as exc:  # noqa: BLE001 — la base est un plus, jamais bloquante
+        print(f"Base de référence : import de l'historique impossible ({exc})", flush=True)
 
     # --- Authentification (mot de passe partagé) ---------------------------
     def _authed() -> bool:
@@ -176,8 +185,9 @@ def create_app() -> Flask:
         job = _JOBS.get(job_id)
         if job and job.status == "running":
             return jsonify(error="job en cours"), 409
+        criteria = _read_meta(job_id).get("criteria", {})
         if job and job.status == "done":
-            return jsonify(mode=job.mode, summary=job.summary, rows=_rows(job.mode, job.items))
+            return jsonify(mode=job.mode, summary=job.summary, rows=_rows(job.mode, job.items), criteria=criteria)
 
         # Pas (ou plus) en mémoire (redémarrage serveur, ancien run…) : on
         # retombe sur les fichiers persistés pour que l'historique reste
@@ -187,7 +197,7 @@ def create_app() -> Flask:
         if items is None:
             return jsonify(error="job inconnu"), 404
         summary = _summarize(mode, _frame(mode, items))
-        return jsonify(mode=mode, summary=summary, rows=_rows(mode, items))
+        return jsonify(mode=mode, summary=summary, rows=_rows(mode, items), criteria=criteria)
 
     @app.route("/api/recommend/<job_id>", methods=["POST"])
     @login_required
@@ -198,6 +208,9 @@ def create_app() -> Flask:
         if not items:
             return jsonify(error="pas de benchmark disponible"), 404
         data = request.get_json(force=True) or {}
+        n_base = 0
+        if data.get("include_base", True):
+            items, n_base = _with_base(mode, items)
         df = _frame(mode, items)
         if mode == FESTIVAL:
             setting = data.get("setting") or None
@@ -217,7 +230,42 @@ def create_app() -> Flask:
                 capacity=_int_or_none(data.get("capacity")),
                 artist=data.get("artist") or None,
             )
+        reco["base_incluse"] = n_base
         return jsonify(reco=reco)
+
+    # --- Base de référence ------------------------------------------------------
+    @app.route("/api/base")
+    @login_required
+    def api_base():
+        mode = request.args.get("mode")
+        mode = mode if mode in (ARTIST, FESTIVAL) else None
+        entries = knowledge.list_entries(
+            mode, request.args.get("q", ""), excluded=request.args.get("excluded") == "1"
+        )
+        return jsonify(entries=entries, stats=knowledge.stats(), editable=knowledge.EDITABLE)
+
+    @app.route("/api/base/<entry_id>", methods=["PUT"])
+    @login_required
+    def api_base_update(entry_id: str):
+        changes = (request.get_json(force=True) or {}).get("fields") or {}
+        try:
+            entry = knowledge.update(entry_id, changes)
+        except KeyError:
+            return jsonify(error="entrée inconnue"), 404
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        return jsonify(entry=entry)
+
+    @app.route("/api/base/<entry_id>/<action>", methods=["POST"])
+    @login_required
+    def api_base_exclude(entry_id: str, action: str):
+        if action not in ("exclude", "restore"):
+            return jsonify(error="action inconnue"), 404
+        try:
+            knowledge.set_excluded(entry_id, action == "exclude")
+        except KeyError:
+            return jsonify(error="entrée inconnue"), 404
+        return jsonify(ok=True)
 
     # --- Historique ----------------------------------------------------------
     @app.route("/api/history")
@@ -298,6 +346,21 @@ def _run_job(
             job.id, job.mode, criteria, profile, strategy, with_prices,
             status="error", error=str(exc),
         )
+
+
+def _with_base(mode: str, items: list) -> tuple[list, int]:
+    """Événements du run + ceux de la base de référence (sans doublon, la
+    version du run prime). Les scores de comparabilité, relatifs à la cible du
+    run, sont effacés : ce sont les filtres de la préconisation qui définissent
+    alors la cible, sur l'ensemble de la base."""
+    try:
+        base_items = knowledge.items(mode)
+    except Exception:  # noqa: BLE001
+        return items, 0
+    seen = {cache_key(i) for i in items}
+    extra = [b for b in base_items if cache_key(b) not in seen]
+    pool = [i.model_copy(update={"comparability": None}) for i in items + extra]
+    return pool, len(extra)
 
 
 # --- Dispatch par mode ---------------------------------------------------------
@@ -471,6 +534,8 @@ def _rows(mode: str, items: list) -> list[dict]:
             "comparability_detail": i.comparability_detail,
             "anomalies": i.anomalies,
             "estimated_fields": i.estimated_fields,
+            "from_base": i.from_base,
+            "priced_at": i.priced_at,
         }
         if mode == FESTIVAL:
             out.append({

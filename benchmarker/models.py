@@ -152,6 +152,9 @@ class Concert(BaseModel):
     estimated_fields: List[str] = Field(
         default_factory=list, description="Champs estimés plutôt que trouvés tels quels (capacity…)."
     )
+    from_base: bool = Field(
+        default=False, description="Événement repris de la base de référence (non réextrait dans ce run)."
+    )
 
     # --- Helpers --------------------------------------------------------------
     def prices_eur(self, fx: dict[str, float]) -> List[float]:
@@ -398,6 +401,9 @@ class Festival(BaseModel):
     )
     estimated_fields: List[str] = Field(
         default_factory=list, description="Champs estimés plutôt que trouvés tels quels (capacity…)."
+    )
+    from_base: bool = Field(
+        default=False, description="Événement repris de la base de référence (non réextrait dans ce run)."
     )
 
     def prices_eur(self, fx: dict[str, float]) -> List[float]:

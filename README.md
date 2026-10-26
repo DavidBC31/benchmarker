@@ -154,6 +154,16 @@ Les statistiques et la préconisation suivent les mêmes règles, pour comparer 
 
 Côté efficience, **3 événements sont extraits en parallèle** (un navigateur par fil : même coût, environ 3 fois plus rapide), et chaque grille est **mémorisée** 7 jours (échecs : 24 h) dans `cache/prices/` : relancer un benchmark sur les mêmes événements ne repaie pas l'extraction et rend le même résultat.
 
+### Base de référence (mémoire cumulative)
+
+Les résultats ne repartent plus de zéro à chaque run : une base locale (`data/reference.sqlite`) conserve chaque événement tarifé (date de concert ou édition de festival).
+
+- **Chaque run l'enrichit.** Une grille plus fraîche remplace l'ancienne, mais une grille moins bonne (échec, simple « à partir de ») ne remplace jamais une meilleure, et une valeur absente n'efface jamais une valeur connue.
+- **Chaque run y puise.** Après la découverte, les événements déjà connus parmi les cibles (artistes / festivals comparables) ou dans le profil (comparabilité ≥ 40), tarifés depuis moins d'un an et dans la période demandée, sont ajoutés aux résultats avec un badge **mémoire**, sans nouvelle extraction. Un run dont la découverte ne trouve rien peut ainsi rester utile.
+- **La préconisation** peut s'appuyer sur toute la base (case « Inclure toute la base de référence »), et sa cible est préremplie depuis les critères du run.
+- **Onglet Base** : recherche (insensible aux accents), correction à la main (jauge, cadre, soirs, artistes par soir, grille « Catégorie = prix »…), exclusion et restauration. Un champ corrigé est **verrouillé** : aucun run ne l'écrase (une grille corrigée verrouille aussi sa confiance et sa phase). Un événement exclu n'est jamais réintroduit.
+- **Amorçage** : à la première mise en route, les runs passés présents dans `out/` sont importés.
+
 ## Interface web
 
 Une interface web locale permet de piloter l'outil sans terminal, avec une direction artistique dédiée (glassmorphism iOS 18, navbar pilule, bleu `#1450E2`) :
@@ -161,6 +171,7 @@ Une interface web locale permet de piloter l'outil sans terminal, avec une direc
 - **Artiste** : formulaire de critères (dont un champ optionnel « Artiste de référence » pour cibler des artistes comparables plutôt que/en complément d'un style), progression en direct, résultats (tuiles de synthèse, tableau par catégorie, détail des dates avec la colonne `price_confidence` colorée et les notes), téléchargements CSV/JSON/synthèse, préconisation tarifaire.
 - **Festival** : même parcours avec les critères festival (festival de référence, programmation, jauge/jour, cadre, soirs, artistes/soir) ; résultats par type de pass, prix par jour, prix par artiste, par cadre et par jauge ; préconisation de prix de pass.
 - **Historique** : runs Artiste et Festival (badge de mode), persistés sur disque — survivent aux redémarrages du serveur —, avec critères utilisés, statut, compteurs, bouton **Voir** (recharge les résultats dans le bon onglet) et **Recharger les critères** (pré-remplit le formulaire correspondant).
+- **Base** : la base de référence cumulative (voir plus haut) — recherche, correction, exclusion.
 
 Lancement en local :
 
@@ -230,6 +241,8 @@ Réglable par variables d'environnement (voir `benchmarker/config.py`) :
 | `BENCHMARKER_PRICE_CACHE_FAIL_TTL_HOURS` | `24` | Durée de mémoire d'un échec (heures) |
 | `BENCHMARKER_MIN_PLAUSIBLE_PRICE_EUR` | `5` | Prix plein tarif sous lequel un prix est jugé aberrant |
 | `BENCHMARKER_COMPARABILITY_MIN` | `40` | Score sous lequel un événement est hors profil |
+| `BENCHMARKER_BASE_PATH` | `data/reference.sqlite` | Base de référence (mémoire cumulative) |
+| `BENCHMARKER_BASE_MAX_AGE_DAYS` | `365` | Âge maximal d'une grille en base pour être reprise dans un run |
 
 > Pour minimiser encore le coût : `BENCHMARKER_FETCH_STRATEGY=playwright` supprime totalement le fallback payant (au risque de rater les pages où le rendu ne suffit pas).
 
@@ -244,6 +257,7 @@ benchmarker/
 ├── festivals.py    # mode Festival : festivals comparables + découverte
 ├── comparability.py  # score de comparabilité avec la cible
 ├── price_cache.py  # mémoire des grilles extraites
+├── knowledge.py    # base de référence cumulative (SQLite)
 ├── discovery.py    # étape 1 : découverte des dates
 ├── extraction.py   # étape 2 : extraction des prix (concerts et festivals)
 ├── analysis.py     # stats pandas + export

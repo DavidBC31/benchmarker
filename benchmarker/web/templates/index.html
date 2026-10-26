@@ -263,6 +263,18 @@
   .est { cursor: help; border-bottom: 1px dotted currentColor; }
   .notice { font-size: 12px; color: var(--apple-text-secondary); margin: 10px 0 0; }
   .notice.alert { color: #9a5c00; }
+  .seg { display: inline-flex; gap: 2px; background: var(--apple-bg); border-radius: 9999px; padding: 3px; }
+  .seg button { padding: 7px 16px; font-size: 13px; font-weight: 600; border-radius: 9999px; border: none;
+                background: transparent; color: #9CA3AF; cursor: pointer; font-family: inherit; }
+  .seg button:hover { color: var(--apple-blue); }
+  .seg button.active { color: #fff; background: var(--apple-blue); }
+  .mem-pill { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 9999px; margin-left: 6px;
+              background: rgba(90, 200, 250, 0.18); color: #0b6e99; cursor: help; text-transform: uppercase; letter-spacing: 0.02em; }
+  .lock-pill { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 9999px; margin-left: 6px;
+               background: rgba(175, 82, 222, 0.12); color: var(--apple-purple); cursor: help; text-transform: uppercase; }
+  .row-actions { display: flex; gap: 6px; }
+  .row-actions button { padding: 5px 12px; font-size: 12px; }
+  #base-edit .error { color: #c0392b; font-size: 13px; margin-top: 10px; }
 
   @media (max-width: 720px) {
     nav.pillbar { flex-wrap: wrap; border-radius: 24px; padding: 10px; }
@@ -285,6 +297,7 @@
     <button class="nav-tab active" data-view="artiste">Artiste</button>
     <button class="nav-tab" data-view="festival">Festival</button>
     <button class="nav-tab" data-view="historique">Historique</button>
+    <button class="nav-tab" data-view="base">Base</button>
   </div>
   <div class="nav-right">
     {% if has_key %}
@@ -414,6 +427,41 @@
     </div>
   </section>
 
+  <!-- ============================= VUE : BASE DE RÉFÉRENCE ============================= -->
+  <section class="view" id="view-base">
+    <div class="glass-card">
+      <div class="row" style="margin-top:0; justify-content:space-between">
+        <h2 style="margin:0">Base de référence</h2>
+        <span class="meta" id="base-stats"></span>
+      </div>
+      <p class="meta" style="margin-top:8px">Mémoire cumulative des événements tarifés : chaque run l'enrichit, et les runs suivants y reprennent les événements comparables sans nouvelle extraction. Une correction manuelle est verrouillée (aucun run ne l'écrase) ; un événement exclu n'est jamais réintroduit.</p>
+      <div class="row">
+        <div class="seg" id="base-mode">
+          <button class="active" data-mode="artist">Artistes</button>
+          <button data-mode="festival">Festivals</button>
+        </div>
+        <input id="base-q" placeholder="Rechercher : artiste, festival, ville…" style="max-width:340px">
+        <label class="checkbox-row"><input type="checkbox" id="base-excluded"> Afficher les exclus</label>
+      </div>
+    </div>
+    <div class="glass-card" id="base-edit" style="display:none">
+      <h2 id="base-edit-title">Corriger</h2>
+      <div class="grid" id="base-edit-fields"></div>
+      <div style="margin-top:14px" id="base-edit-prices-wrap">
+        <label>Grille tarifaire <span class="field-hint">(une catégorie par ligne : Catégorie = prix)</span></label>
+        <textarea id="base-edit-prices" rows="5"></textarea>
+      </div>
+      <div class="row">
+        <button class="cta" id="base-save">Enregistrer la correction</button>
+        <button class="glass-pill" id="base-cancel">Annuler</button>
+      </div>
+      <div class="error" id="base-edit-error"></div>
+    </div>
+    <div class="glass-card">
+      <div class="tblwrap"><table id="base-table"></table></div>
+    </div>
+  </section>
+
   <!-- ================ ZONE PARTAGÉE : progression, résultats, préconisation ================ -->
   <section id="run-area">
     <div class="glass-card" id="progress-panel" style="display:none">
@@ -454,7 +502,8 @@
           </select>
         </div>
       </div>
-      <div class="row"><button class="cta" id="reco-btn">Préconiser des tarifs</button></div>
+      <div class="row"><button class="cta" id="reco-btn">Préconiser des tarifs</button>
+        <label class="checkbox-row"><input type="checkbox" id="reco-include-base" checked> Inclure toute la base de référence</label></div>
       <div id="reco-out" style="margin-top:16px"></div>
     </div>
   </section>
@@ -479,6 +528,7 @@ function switchView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
   $("run-area").style.display = (displayedMode && VIEW_OF[displayedMode] === name) ? "flex" : "none";
   if (name === 'historique') loadHistory();
+  if (name === 'base') loadBase();
 }
 
 // --- Lancement d'un run ------------------------------------------------------
@@ -549,6 +599,7 @@ async function loadResults(jobId) {
   currentJob = jobId;
   displayedMode = j.mode || "artist";
   renderResults(j.summary, j.rows, displayedMode);
+  prefillReco(j.criteria || {}, displayedMode);
   $("results-panel").style.display = "";
   $("reco-panel").style.display = "";
   $("reco-artist-fields").style.display = displayedMode === "festival" ? "none" : "";
@@ -591,6 +642,10 @@ function maybeEstimated(r, field, html) {
   return (r.estimated_fields || []).includes(field)
     ? `<span class="est" title="valeur estimée">≈ ${html}</span>` : html;
 }
+function memPill(r) {
+  return r.from_base
+    ? `<span class="mem-pill" title="Repris de la base de référence (tarifé le ${esc((r.priced_at || "?").slice(0, 10))}), sans nouvelle extraction">mémoire</span>` : "";
+}
 function phaseCell(r) { return `<td>${r.price_phase ? esc(r.price_phase) : ""}</td>`; }
 function exclusionsNotice(s) {
   const x = s.exclusions || {};
@@ -623,7 +678,7 @@ function renderResults(s, rows, mode) {
     $("detail-title").textContent = "Détail des festivals";
     let html = `<tr><th>Festival</th><th>Comparabilité</th><th>Édition</th><th>Dates</th><th>Ville</th><th>Cadre</th><th>Jauge/jour</th><th>Soirs</th><th>Artistes/soir</th><th>Programmation</th><th>Têtes d'affiche</th><th>Prix</th><th>Phase</th><th>Confiance</th><th>Note</th></tr>`;
     html += (rows||[]).map(r => `<tr>
-      <td>${esc(r.festival)}</td>${compCell(r)}<td>${esc(r.edition)}</td>
+      <td>${esc(r.festival)}${memPill(r)}</td>${compCell(r)}<td>${esc(r.edition)}</td>
       <td>${esc(r.date_start)}${r.date_end && r.date_end !== r.date_start ? " → " + esc(r.date_end) : ""}</td>
       <td>${esc(r.city)}</td>
       <td>${r.setting && r.setting !== "inconnu" ? `<span class="chip-setting">${esc(SETTING_LABEL[r.setting] || r.setting)}</span>` : dash}</td>
@@ -641,18 +696,35 @@ function renderResults(s, rows, mode) {
   $("detail-title").textContent = "Détail des dates";
   let html = `<tr><th>Artiste</th><th>Comparabilité</th><th>Date</th><th>Lieu</th><th>Ville</th><th>Jauge</th><th>Prix</th><th>Phase</th><th>Confiance</th><th>Note</th></tr>`;
   html += (rows||[]).map(r => `<tr>
-    <td>${esc(r.artist)}</td>${compCell(r)}<td>${esc(r.date)}</td><td class="wrap">${esc(r.venue)}</td>
+    <td>${esc(r.artist)}${memPill(r)}</td>${compCell(r)}<td>${esc(r.date)}</td><td class="wrap">${esc(r.venue)}</td>
     <td>${esc(r.city)}</td><td>${maybeEstimated(r, "capacity", r.capacity ? `<span class="chip-capacity">${r.capacity}</span>` : "")}</td>
     <td class="wrap prices">${esc(r.prices) || dash}</td>${phaseCell(r)}${confCell(r)}${noteCell(r)}</tr>`).join("");
   $("rows-table").innerHTML = html;
 }
 
 // --- Préconisation -------------------------------------------------------------
+// Préremplit la cible de la préconisation à partir des critères du run.
+function prefillReco(c, mode) {
+  const mid = (lo, hi) => (lo != null && hi != null) ? Math.round((lo + hi) / 2) : (lo ?? hi ?? "");
+  if (mode === "festival") {
+    $("rf_name").value = c.reference_festival || "";
+    $("rf_genre").value = (c.genres || [])[0] || "";
+    $("rf_capacity").value = c.reference_capacity || mid(c.capacity_min, c.capacity_max);
+    $("rf_nights").value = c.reference_nights || (c.nights_min === c.nights_max ? (c.nights_min ?? "") : "");
+    $("rf_apn").value = c.reference_artists_per_night || "";
+    $("rf_setting").value = c.reference_setting || ((c.settings || []).length === 1 ? c.settings[0] : "");
+  } else {
+    $("r_artist").value = c.reference_artist || "";
+    $("r_genre").value = (c.genres || [])[0] || "";
+    $("r_capacity").value = c.reference_capacity || mid(c.capacity_min, c.capacity_max);
+  }
+}
 $("reco-btn").addEventListener("click", async () => {
   const body = displayedMode === "festival"
     ? {name: $("rf_name").value, genre: $("rf_genre").value, capacity: $("rf_capacity").value,
        nb_nights: $("rf_nights").value, artists_per_night: $("rf_apn").value, setting: $("rf_setting").value}
     : {artist: $("r_artist").value, genre: $("r_genre").value, capacity: $("r_capacity").value};
+  body.include_base = $("reco-include-base").checked;
   const res = await fetch(`/api/recommend/${currentJob}`, {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify(body)});
   const j = await res.json();
@@ -661,7 +733,8 @@ $("reco-btn").addEventListener("click", async () => {
   const per = r.reco_par_categorie || {};
   const firstCol = displayedMode === "festival" ? "Type de pass" : "Catégorie";
   const sampleLabel = displayedMode === "festival" ? "festivals comparables" : "échantillon";
-  let html = `<p class="meta">Filtres : ${esc((r.filtres_appliques||[]).join(", "))} · ${sampleLabel} : ${r.taille_echantillon}</p>`;
+  const baseNote = r.base_incluse ? ` (pool : run + ${r.base_incluse} événement(s) de la base)` : "";
+  let html = `<p class="meta">Filtres : ${esc((r.filtres_appliques||[]).join(", "))} · ${sampleLabel} : ${r.taille_echantillon}${baseNote}</p>`;
   if ((r.filtres_ignores || []).length) html += `<p class="meta">Filtres ignorés : ${esc(r.filtres_ignores.join(", "))}</p>`;
   for (const w of [r.avertissement_profil, r.avertissement_phase].filter(Boolean)) html += `<p class="notice alert">⚠ ${esc(w)}</p>`;
   html += `<div class="tblwrap" style="margin-top:10px"><table><tr><th>${firstCol}</th><th>N</th><th>Fourchette (EUR)</th><th>Médiane</th></tr>` +
@@ -796,6 +869,134 @@ function reloadCriteria(r) {
     switchView('artiste');
   }
   window.scrollTo({top:0, behavior:"smooth"});
+}
+
+// --- Base de référence -------------------------------------------------------
+const BASE_LABELS = {
+  city: "Ville", region: "Région", setting: "Cadre", capacity: "Jauge", genre: "Style", genres: "Programmation",
+  nb_nights: "Nombre de soirs", artists_per_night: "Artistes / soir", price_confidence: "Confiance",
+  price_phase: "Phase de prix", source_url: "URL source", notes: "Note",
+};
+const BASE_INT_FIELDS = ["capacity", "nb_nights", "artists_per_night"];
+let baseMode = "artist", baseById = {}, baseEditable = {}, baseEditing = null, baseTimer = null;
+
+document.querySelectorAll('#base-mode button').forEach(b => b.addEventListener('click', () => {
+  baseMode = b.dataset.mode;
+  document.querySelectorAll('#base-mode button').forEach(x => x.classList.toggle('active', x === b));
+  closeBaseEdit(); loadBase();
+}));
+$("base-q").addEventListener("input", () => { clearTimeout(baseTimer); baseTimer = setTimeout(loadBase, 250); });
+$("base-excluded").addEventListener("change", loadBase);
+$("base-cancel").addEventListener("click", closeBaseEdit);
+$("base-save").addEventListener("click", saveBaseEdit);
+
+async function loadBase() {
+  const qs = new URLSearchParams({mode: baseMode, q: $("base-q").value, excluded: $("base-excluded").checked ? "1" : "0"});
+  const res = await fetch(`/api/base?${qs}`);
+  const j = await res.json();
+  baseEditable = j.editable || {};
+  const st = j.stats || {};
+  $("base-stats").textContent = `${st.artist ?? 0} date(s) · ${st.festival ?? 0} festival(s)` +
+    (st.exclus ? ` · ${st.exclus} exclu(s)` : "") +
+    (st.derniere_maj ? ` · mise à jour ${new Date(st.derniere_maj).toLocaleDateString('fr-FR')}` : "");
+  baseById = {};
+  (j.entries || []).forEach(e => baseById[e.id] = e);
+  renderBase(j.entries || []);
+}
+
+function pricesText(prices) {
+  return (prices || []).map(p => `${p.name} = ${p.price}${p.currency && p.currency !== "EUR" ? " " + p.currency : ""}`).join("\n");
+}
+function shortPrices(prices) {
+  return (prices || []).map(p => `${p.name} ${p.price}${p.currency === "EUR" ? "€" : " " + p.currency}`).join(", ");
+}
+function fmtDay(iso) { return iso ? new Date(iso).toLocaleDateString('fr-FR') : ""; }
+
+function renderBase(entries) {
+  const excludedView = $("base-excluded").checked;
+  if (!entries.length) {
+    $("base-table").innerHTML = `<tr><td class="empty-state">${excludedView ? "Aucun événement exclu." : "La base est vide pour l'instant : elle se remplit à chaque run."}</td></tr>`;
+    return;
+  }
+  const fest = baseMode === "festival";
+  const head = fest
+    ? `<tr><th></th><th>Festival</th><th>Ville</th><th>Cadre</th><th>Jauge/jour</th><th>Soirs</th><th>Artistes/soir</th><th>Programmation</th><th>Prix</th><th>Phase</th><th>Confiance</th><th>Tarifé le</th></tr>`
+    : `<tr><th></th><th>Événement</th><th>Date</th><th>Ville</th><th>Jauge</th><th>Style</th><th>Prix</th><th>Phase</th><th>Confiance</th><th>Tarifé le</th></tr>`;
+  // id = empreinte hexadécimale générée serveur : sûr en attribut data-*.
+  const rows = entries.map(e => {
+    const d = e.data, locked = e.locked_fields || [];
+    const lock = locked.length ? `<span class="lock-pill" title="Corrigé à la main (verrouillé) : ${esc(locked.map(f => BASE_LABELS[f] || f).join(", "))}">corrigé</span>` : "";
+    const actions = excludedView
+      ? `<button class="glass-pill" data-action="restore" data-id="${e.id}">Restaurer</button>`
+      : `<button class="glass-pill" data-action="edit" data-id="${e.id}">Corriger</button><button class="glass-pill" data-action="exclude" data-id="${e.id}">Exclure</button>`;
+    const cap = maybeEstimated(d, "capacity", d.capacity ? `<span class="chip-capacity">${d.capacity}</span>` : "");
+    const common = `<td class="wrap prices">${esc(shortPrices(d.prices)) || dash}</td><td>${esc(d.price_phase || "")}</td>
+      <td><span class="conf c-${esc(d.price_confidence)}">${esc(d.price_confidence)}</span></td><td>${fmtDay(e.priced_at)}</td>`;
+    const act = `<td><div class="row-actions">${actions}</div></td>`;
+    if (fest) {
+      return `<tr>${act}<td>${esc(e.label)}${lock}</td><td>${esc(d.city)}</td>
+        <td>${d.setting && d.setting !== "inconnu" ? `<span class="chip-setting">${esc(SETTING_LABEL[d.setting] || d.setting)}</span>` : dash}</td>
+        <td>${cap}</td><td>${d.nb_nights ?? ""}</td><td>${maybeEstimated(d, "artists_per_night", d.artists_per_night ?? "")}</td>
+        <td class="wrap">${esc(d.genres)}</td>${common}</tr>`;
+    }
+    return `<tr>${act}<td>${esc(d.artist)} — ${esc(d.venue || "?")}${lock}</td><td>${esc(d.date)}</td><td>${esc(d.city)}</td>
+      <td>${cap}</td><td>${esc(d.genre)}</td>${common}</tr>`;
+  }).join("");
+  $("base-table").innerHTML = head + rows;
+  document.querySelectorAll('#base-table [data-action]').forEach(btn => btn.addEventListener('click', () => {
+    const id = btn.dataset.id;
+    if (btn.dataset.action === "edit") openBaseEdit(baseById[id]);
+    else baseAction(id, btn.dataset.action);
+  }));
+}
+
+async function baseAction(id, action) {
+  if (action === "exclude" && !confirm("Exclure cet événement ? Il ne sera plus repris ni réintroduit par les runs (restaurable).")) return;
+  await fetch(`/api/base/${id}/${action}`, {method: "POST"});
+  loadBase();
+}
+
+function openBaseEdit(e) {
+  baseEditing = e;
+  const d = e.data;
+  $("base-edit-title").textContent = `Corriger : ${e.label}`;
+  const fields = (baseEditable[e.mode] || []).filter(f => f !== "prices");
+  $("base-edit-fields").innerHTML = fields.map(f => {
+    const v = d[f] ?? "";
+    let input;
+    if (f === "setting") {
+      input = `<select data-field="setting">${["inconnu", "urbain", "periurbain", "rural"].map(o => `<option value="${o}" ${o === v ? "selected" : ""}>${o === "inconnu" ? "(inconnu)" : SETTING_LABEL[o]}</option>`).join("")}</select>`;
+    } else if (f === "price_confidence") {
+      input = `<select data-field="price_confidence">${["grille_complete", "grille_partielle", "prix_a_partir_de", "aucun_prix"].map(o => `<option ${o === v ? "selected" : ""}>${o}</option>`).join("")}</select>`;
+    } else {
+      input = `<input data-field="${f}" ${BASE_INT_FIELDS.includes(f) ? 'type="number"' : ""} value="${esc(v)}">`;
+    }
+    return `<div><label>${BASE_LABELS[f] || f}</label>${input}</div>`;
+  }).join("");
+  $("base-edit-prices").value = pricesText(d.prices);
+  $("base-edit-error").textContent = "";
+  $("base-edit").style.display = "";
+  $("base-edit").scrollIntoView({behavior: "smooth", block: "start"});
+}
+function closeBaseEdit() { baseEditing = null; $("base-edit").style.display = "none"; }
+
+async function saveBaseEdit() {
+  if (!baseEditing) return;
+  const d = baseEditing.data, changes = {};
+  document.querySelectorAll('#base-edit-fields [data-field]').forEach(el => {
+    const f = el.dataset.field;
+    let v = el.value.trim();
+    v = v === "" ? null : (BASE_INT_FIELDS.includes(f) ? Number(v) : v);
+    if (v !== (d[f] ?? null)) changes[f] = v;
+  });
+  const pricesNow = $("base-edit-prices").value.trim();
+  if (pricesNow !== pricesText(d.prices).trim()) changes.prices = pricesNow;
+  if (!Object.keys(changes).length) { closeBaseEdit(); return; }
+  const res = await fetch(`/api/base/${baseEditing.id}`, {method: "PUT", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({fields: changes})});
+  const j = await res.json();
+  if (!res.ok) { $("base-edit-error").textContent = j.error || "Correction refusée."; return; }
+  closeBaseEdit(); loadBase();
 }
 
 function esc(s) { return (s==null)?"":String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
