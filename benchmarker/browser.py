@@ -15,6 +15,7 @@ import glob
 import os
 import re
 import unicodedata
+from urllib.parse import urlsplit
 from typing import Optional
 
 from . import config
@@ -137,10 +138,14 @@ class PageRenderer:
                 except Exception:
                     pass  # networkidle peut ne jamais arriver (trackers) — pas bloquant
                 # Collectés AVANT le clic de révélation, qui peut faire naviguer.
-                links = _booking_links(page, url)
+                by_label, by_href = _booking_links(page, url)
                 self._reveal_price_widget(page)
-                text = page.inner_text("body")
-                return text[: self.text_cap], links
+                main_text = page.inner_text("body")
+                # Billetteries intégrées en cadre (Weezevent, Shotgun, Festik…) :
+                # invisibles dans le texte de la page principale.
+                frame_texts, frame_links = _frames_content(page)
+                links = list(dict.fromkeys(by_label + frame_links + by_href))[:3]
+                return _assemble(main_text, frame_texts, self.text_cap), links
             except Exception as exc:
                 last_exc = exc
                 is_network_error = "net::" in str(exc)
@@ -193,12 +198,12 @@ def _strip_accents(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
 
 
-def _booking_links(page, current_url: str, limit: int = 3) -> list[str]:
-    """Liens de réservation de la page, libellés explicites d'abord (best effort)."""
+def _booking_links(page, current_url: str) -> tuple[list[str], list[str]]:
+    """Liens de réservation de la page : (libellé explicite, href évocateur)."""
     try:
         anchors = page.evaluate(_BOOKING_LINKS_JS)
     except Exception:
-        return []
+        return [], []
     current = current_url.split("#")[0].rstrip("/")
     by_label, by_href = [], []
     for a in anchors:
@@ -209,11 +214,41 @@ def _booking_links(page, current_url: str, limit: int = 3) -> list[str]:
             by_label.append(href)
         elif _BOOKING_LABEL_RE.search(href):
             by_href.append(href)
-    out: list[str] = []
-    for href in by_label + by_href:
-        if href not in out:
-            out.append(href)
-    return out[:limit]
+    return list(dict.fromkeys(by_label)), list(dict.fromkeys(by_href))
+
+
+_WIDGET_RE = re.compile(
+    r"weezevent|shotgun|festik|yurplan|billetweb|helloasso|eventbrite|digitick|fnacspectacles"
+    r"|seetickets|ticketmaster|dice\.fm|billet|ticket", re.I,
+)
+
+
+def _frames_content(page) -> tuple[list[str], list[str]]:
+    """Texte des cadres intégrés (iframes) et URL de ceux qui ressemblent à
+    une billetterie (à suivre si leur contenu n'a pas pu être lu)."""
+    texts, links = [], []
+    for frame in page.frames:
+        if frame == page.main_frame or not frame.url.startswith(("http://", "https://")):
+            continue
+        is_widget = bool(_WIDGET_RE.search(frame.url))
+        try:
+            text = frame.inner_text("body", timeout=2000).strip()
+        except Exception:
+            text = ""
+        if len(text) >= 20:
+            texts.append(f"[billetterie intégrée : {urlsplit(frame.url).netloc}]\n{text}")
+        elif is_widget:
+            links.append(frame.url)
+    return texts, links
+
+
+def _assemble(main_text: str, frame_texts: list[str], cap: int) -> str:
+    """Page principale + cadres, plafonné, en gardant de la place pour les cadres."""
+    if not frame_texts:
+        return main_text[:cap]
+    frames = "\n\n".join(frame_texts)
+    keep_main = max(cap // 3, cap - len(frames))
+    return (main_text[:keep_main] + "\n\n" + frames)[:cap]
 
 
 def render_page(url: str, **kwargs) -> str:

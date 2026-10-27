@@ -152,6 +152,22 @@ IMPORTANT : inclus TOUS les festivals confirmés, même sans URL. Ignore les dou
 festivals hors critères."""
 
 
+def edition_hint(today: _date) -> str:
+    """Édition à viser, en années explicites. Sans ça, le modèle se calait sur
+    des éditions déjà fermées (constaté : éditions 2025 visées en octobre 2026,
+    billetteries fermées, aucun prix)."""
+    y = today.year
+    if today.month >= 9:  # saison estivale terminée
+        return (f"Les éditions de l'été {y} sont passées ; la billetterie de l'édition {y + 1} est souvent déjà "
+                f"ouverte (prévente / early bird). Vise l'édition {y + 1} si ses tarifs sont publiés, sinon "
+                f"l'édition {y} (tarifs souvent encore visibles). N'utilise pas l'édition {y - 1} ni les précédentes.")
+    if today.month <= 4:
+        return (f"La saison {y} approche : la billetterie de l'édition {y} est généralement ouverte. Vise "
+                f"l'édition {y}, sinon {y - 1} si ses tarifs sont encore visibles. N'utilise pas {y - 2} ni avant.")
+    return (f"La saison {y} est en cours : vise l'édition {y} (billetterie ouverte ou tarifs encore visibles), "
+            f"sinon {y - 1}. N'utilise pas {y - 2} ni avant.")
+
+
 def discover_festivals(
     client: anthropic.Anthropic,
     criteria: FestivalCriteria,
@@ -162,8 +178,7 @@ def discover_festivals(
     settings = settings or config.resolve_settings()
     log = progress or (lambda _msg: None)
     user = (
-        f"Date d'aujourd'hui : {_date.today().isoformat()} (pour juger si une édition "
-        "passée est récente, et si une édition future a déjà sa billetterie ouverte).\n\n"
+        f"Date d'aujourd'hui : {_date.today().isoformat()}. {edition_hint(_date.today())}\n\n"
         "Trouve des festivals correspondant aux critères suivants :\n\n"
         f"{criteria.to_prompt()}\n\n"
         f"Sources billetterie courantes des festivals : {', '.join(config.FESTIVAL_TICKETING_SOURCES)}.\n"

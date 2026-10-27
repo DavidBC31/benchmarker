@@ -116,11 +116,21 @@ def _merge(old: dict, new: dict, locked: set) -> dict:
     # requalifier une grille qu'il n'a pas le droit de modifier.
     if locked & set(_PRICE_FIELDS):
         locked = locked | set(_PRICE_FIELDS)
+    old_est, new_est = set(old.get("estimated_fields") or []), set(new.get("estimated_fields") or [])
     out = dict(old)
+    from_new: set = set()
     for k, v in new.items():
-        if k in locked or (_empty(v) and not _empty(old.get(k))):
+        if k in locked or k == "estimated_fields" or (_empty(v) and not _empty(old.get(k))):
+            continue
+        # Une valeur trouvée n'est jamais remplacée par une estimation
+        # (constaté : une jauge « estimée » à 10 000 contredisant 33 000 trouvés).
+        if k in new_est and k not in old_est and not _empty(old.get(k)):
             continue
         out[k] = v
+        from_new.add(k)
+    out["estimated_fields"] = sorted(
+        f for f in old_est | new_est if (f in new_est if f in from_new else f in old_est)
+    )
     # Ne jamais dégrader une grille : on garde l'ancienne, champs liés compris.
     if _RANK.get(new.get("price_confidence"), 0) < _RANK.get(old.get("price_confidence"), 0):
         for k in _PRICE_FIELDS:

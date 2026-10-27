@@ -137,9 +137,23 @@ def extract_prices(
 
     # 1) Playwright d'abord (rendu local GRATUIT) pour "playwright" et "auto".
     #    Seule la structuration coûte, et une seule fois.
+    last_text: Optional[str] = None  # dernière page lue, pour expliquer un échec
     if strategy in ("playwright", "auto"):
         rendered, err, links = _gather_via_playwright(item.source_url, renderer)
+        # Domaine inexistant (URL inventée à la découverte, ex. « cabaret-vert.com ») :
+        # une recherche ciblée plutôt qu'un web_fetch payant sur une adresse morte.
+        if not rendered and _is_dead_domain(err):
+            dead = urlsplit(item.source_url).netloc
+            refined = _refine_source_url(client, item, settings)
+            if not refined or urlsplit(refined).netloc == dead:
+                item.notes = _append_note(item.notes, f"domaine inexistant ({dead}) et aucune autre URL trouvée")
+                item.price_confidence = PriceConfidence.NONE
+                return item
+            item.notes = _append_note(item.notes, f"domaine inexistant ({dead}), URL retrouvée : {refined}")
+            item.source_url = refined
+            rendered, err, links = _gather_via_playwright(refined, renderer)
         if rendered:
+            last_text = rendered
             result = _structure(client, rendered, settings.structure_model)
             used = "playwright"
         else:
@@ -158,6 +172,7 @@ def extract_prices(
             if link:
                 text2, err2, _ = _gather_via_playwright(link, renderer)
                 if text2:
+                    last_text = text2
                     candidate = _structure(client, text2, settings.structure_model)
                     if _is_better(candidate, result):
                         result, used = candidate, "playwright (lien de réservation)"
@@ -174,6 +189,7 @@ def extract_prices(
     if need_web_fetch:
         page_text, err = _gather_via_web_fetch(client, item, settings)
         if page_text:
+            last_text = page_text
             candidate = _structure(client, page_text, settings.structure_model)
             if _is_better(candidate, result):
                 result, used = candidate, "web_fetch"
@@ -184,6 +200,11 @@ def extract_prices(
             item.notes = _append_note(item.notes, f"web_fetch : {err}")
 
     # 3) Application du résultat
+    # Échec sans explication du modèle : on note le début de la page lue (mur
+    # anti-bot, page vide, billetterie fermée…) pour ne plus avoir d'échec muet.
+    if last_text and (result is None or (result.price_confidence == PriceConfidence.NONE and not result.notes)):
+        excerpt = " ".join(last_text.split())[:180].rstrip("…. ")
+        item.notes = _append_note(item.notes, f"aucune grille lue — début de la page : « {excerpt}… »")
     if result is None:
         item.price_confidence = PriceConfidence.NONE
         return item
@@ -241,6 +262,10 @@ def _is_high_friction(url: Optional[str]) -> bool:
     return any(host == d or host.endswith("." + d) for d in config.HIGH_FRICTION_DOMAINS)
 
 
+def _is_dead_domain(err: Optional[str]) -> bool:
+    return bool(err) and any(k in err for k in ("ERR_NAME_NOT_RESOLVED", "ERR_NAME_RESOLUTION_FAILED"))
+
+
 def _domain_in(url: Optional[str], domains) -> bool:
     if not url:
         return False
@@ -289,6 +314,8 @@ def _refine_source_url(
          if is_alternate else
          "Trouve l'URL directe de vente de billets pour cet événement précis :\n")
         + item.search_label()
+        + ("\nSi cette édition est passée, la page billetterie / tarifs de l'édition en cours ou à venir "
+           "convient (les prix seront rattachés à la bonne édition)." if isinstance(item, Festival) else "")
     )
     web_search = dict(config.WEB_SEARCH_TOOL)
     web_search["max_uses"] = config.URL_REFINE_MAX_USES
