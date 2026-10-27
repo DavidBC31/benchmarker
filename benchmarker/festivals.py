@@ -34,7 +34,13 @@ festivals vraiment COMPARABLES pour un benchmark tarifaire, sur l'ensemble de ce
 - format proche : nombre de soirs / jours, nombre d'artistes par soir.
 
 Utilise la recherche web pour établir le profil du festival de référence sur ces critères,
-puis trouve des festivals qui partagent ce profil (France en priorité). Un festival
+puis trouve des festivals qui partagent ce profil (France en priorité).
+
+La JAUGE JOURNALIÈRE est le critère prioritaire (elle détermine le niveau de
+programmation et de prix) : ne retiens que des festivals entre environ 0,6× et 1,6×
+la jauge journalière de la référence. Un festival 2 à 3 fois plus gros n'est PAS
+comparable, même s'il est plus connu ou partage une tête d'affiche : préfère des
+festivals moins médiatisés mais de taille équivalente. Un festival
 électro urbain de 5 000 personnes/jour n'est pas comparable à un festival rural
 généraliste de 50 000 personnes/jour, même s'ils partagent une tête d'affiche.
 Reste factuel : ne propose que des festivals dont tu es raisonnablement sûr."""

@@ -31,7 +31,15 @@ from pydantic import ValidationError
 
 from . import config
 from .comparability import score_concerts, score_festivals
-from .models import Concert, Festival, FestivalCriteria, PriceConfidence, PricedItem, SearchCriteria
+from .models import (
+    Concert,
+    Festival,
+    FestivalCriteria,
+    PriceConfidence,
+    PricedItem,
+    SearchCriteria,
+    same_festival,
+)
 from .price_cache import cache_key as identity
 
 ARTIST, FESTIVAL = "artist", "festival"
@@ -227,6 +235,26 @@ def items(mode: str, *, path: Optional[Path] = None) -> List[PricedItem]:
 
 
 # --- Utilisation dans un run ---------------------------------------------------
+def _festival_rank(f: Festival) -> tuple:
+    m = re.search(r"(19|20)\d{2}", f.edition or "")
+    return (_RANK.get(f.price_confidence.value, 0), len(f.prices), int(m.group(0)) if m else 0, not f.from_base)
+
+
+def dedupe_festivals(festivals: List[Festival]) -> tuple[List[Festival], List[str]]:
+    """Une entrée par festival (même festival = `same_festival`, toutes
+    éditions confondues) : meilleure grille, puis édition la plus récente,
+    puis version du run plutôt que de la base. Renvoie (gardés, écartés)."""
+    kept: List[Festival] = []
+    merged: List[str] = []
+    for f in sorted(festivals, key=_festival_rank, reverse=True):
+        if any(same_festival(k.name, f.name) for k in kept):
+            merged.append(f"{f.name} {f.edition or ''}".strip())
+        else:
+            kept.append(f)
+    return kept, merged
+
+
+
 def _fresh(item: PricedItem, max_age_days: int) -> bool:
     try:
         priced = datetime.fromisoformat(item.priced_at)
@@ -262,6 +290,8 @@ def matching_events(
     ]
     if not pool:
         return []
+    if is_fest:
+        pool, _ = dedupe_festivals(pool)
     (score_festivals if is_fest else score_concerts)(pool, criteria)
     targets = [_norm(t) for t in (criteria.target_festivals if is_fest else criteria.target_artists)]
 

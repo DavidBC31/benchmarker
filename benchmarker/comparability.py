@@ -188,3 +188,55 @@ def _find_reference(items, name: Optional[str], key):
         if k == n or n in k or k in n:
             return it
     return None
+
+
+# --- Profil de référence décrit en texte -----------------------------------------
+_RANGE_K = re.compile(r"(\d{1,3})\s*(?:-|–|à|a)\s*(\d{1,3})\s?(?:000|k)\b", re.I)
+_SINGLE_K = re.compile(r"(\d{1,3})(?:[\s.\u202f\u00a0]?000|\s?k)\b", re.I)
+_NIGHTS = re.compile(r"\b(\d)(?:\s*(?:-|–|à)\s*(\d))?\s*(?:soir|nuit|jours\b)", re.I)
+_APN = re.compile(r"\b(\d{1,2})(?:\s*(?:-|–|à)\s*(\d{1,2}))?\s*artistes", re.I)
+
+
+def _mid(m: re.Match) -> float:
+    lo = int(m.group(1))
+    hi = int(m.group(2)) if m.group(2) else lo
+    return (lo + hi) / 2
+
+
+def profile_numbers(text: Optional[str]) -> dict:
+    """Extrait d'un profil rédigé (« ~10-15 000 festivaliers/jour, 3-4 soirées,
+    4-5 artistes/soir ») la jauge journalière, le nombre de soirs et d'artistes
+    par soir. Filet de sécurité quand la référence n'a pas été chiffrée
+    (constaté : comparabilité calculée sans la jauge sur tout un run)."""
+    out: dict = {}
+    if not text:
+        return out
+    t = text.replace("\u202f", " ").replace("\u00a0", " ")
+    # La jauge journalière d'abord dans un segment qui parle « par jour », pour
+    # ne pas prendre une fréquentation cumulée.
+    def priority(seg: str) -> int:
+        low = seg.lower()
+        if "cumul" in low or "total" in low:
+            return 3
+        if re.search(r"(?:par|/)\s*jour", low):
+            return 0
+        return 1 if "jour" in low else 2
+
+    segments = sorted(re.split(r"[,;()]", t), key=priority)
+    for seg in segments:
+        m = _RANGE_K.search(seg)
+        if m:
+            out["capacity"] = int(_mid(m) * 1000)
+            break
+        m = _SINGLE_K.search(seg)
+        if m:
+            out["capacity"] = int(m.group(1)) * 1000
+            break
+    if (m := _NIGHTS.search(t)):
+        out["nights"] = round(_mid(m) + 0.01)
+    if (m := _APN.search(t)):
+        out["artists_per_night"] = round(_mid(m) + 0.01)
+    setting = coerce_setting(t)
+    if setting != Setting.INCONNU:
+        out["setting"] = setting.value
+    return out

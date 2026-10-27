@@ -7,6 +7,7 @@ Ces modèles servent à la fois de contrat pour la sortie structurée du LLM
 from __future__ import annotations
 
 import re
+import unicodedata
 from enum import Enum
 from typing import List, Optional, Union
 
@@ -326,6 +327,8 @@ class SearchCriteria(BaseModel):
             lo = self.capacity_min if self.capacity_min is not None else "?"
             hi = self.capacity_max if self.capacity_max is not None else "?"
             parts.append(f"- Jauge de salle : entre {lo} et {hi} places")
+        elif self.reference_capacity:
+            parts.append(f"- Jauge de salle visée (profil de l'artiste de référence) : ~{self.reference_capacity} places")
         if self.date_from or self.date_to:
             parts.append(
                 f"- Période : du {self.date_from or '?'} au {self.date_to or '?'}"
@@ -507,6 +510,29 @@ def discovered_to_festival(d: DiscoveredFestival) -> Festival:
     )
 
 
+_FESTIVAL_NAME_STOPWORDS = {"festival", "fest", "de", "du", "des", "la", "le", "les", "l", "d", "et", "en", "the"}
+
+
+def festival_name_tokens(name: Optional[str]) -> frozenset:
+    t = unicodedata.normalize("NFKD", (name or "").lower())
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    return frozenset(w for w in re.split(r"[^a-z0-9]+", t) if w and w not in _FESTIVAL_NAME_STOPWORDS)
+
+
+def same_festival(a: Optional[str], b: Optional[str]) -> bool:
+    """Même festival malgré des libellés différents (« Beauregard Festival » /
+    « Festival Beauregard », « Les Déferlantes » / « Les Déferlantes Sud de
+    France »). L'inclusion n'est admise que si le nom court garde un mot
+    distinctif (≥ 6 lettres) : « Rock » ne doit pas absorber « Rock en Seine »."""
+    ta, tb = festival_name_tokens(a), festival_name_tokens(b)
+    if not ta or not tb:
+        return False
+    if ta == tb:
+        return True
+    small, big = sorted((ta, tb), key=len)
+    return small < big and any(len(w) >= 6 for w in small)
+
+
 SETTING_LABELS = {"urbain": "urbain", "periurbain": "périurbain", "rural": "rural"}
 
 
@@ -562,6 +588,12 @@ class FestivalCriteria(BaseModel):
         if self.settings:
             labels = [SETTING_LABELS.get(s, s) for s in self.settings]
             parts.append(f"- Cadre d'implantation : {' ou '.join(labels)}")
+        if self.reference_capacity and self.capacity_min is None and self.capacity_max is None:
+            lo, hi = round(self.reference_capacity * 0.6, -2), round(self.reference_capacity * 1.6, -2)
+            parts.append(
+                f"- Jauge journalière visée (critère prioritaire, profil de la référence) : ~{self.reference_capacity} "
+                f"festivaliers/jour, soit entre {lo:.0f} et {hi:.0f} — écarte les festivals bien plus gros ou plus petits"
+            )
         for label, lo, hi, unit in (
             ("Jauge journalière", self.capacity_min, self.capacity_max, "festivaliers/jour"),
             ("Nombre de soirs", self.nights_min, self.nights_max, "soirs"),

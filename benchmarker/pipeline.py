@@ -12,7 +12,7 @@ import anthropic
 
 from . import config, knowledge, price_cache
 from .analysis import check_grid
-from .comparability import score_concerts, score_festivals
+from .comparability import profile_numbers, score_concerts, score_festivals
 from .discovery import discover
 from .extraction import extract_prices
 from .festivals import discover_festivals, find_similar_festivals
@@ -134,7 +134,7 @@ def build_benchmark(
     if with_prices and concerts:
         _extract_all(client, concerts, settings, log)
         _record(concerts, log)
-    return _combine(concerts, known)
+    return _combine(concerts, known, log)
 
 
 def resolve_target_festivals(
@@ -150,22 +150,50 @@ def resolve_target_festivals(
     log(f"Recherche de festivals comparables à « {criteria.reference_festival} »…")
     similar = find_similar_festivals(client, criteria.reference_festival, settings=settings)
     festivals = [criteria.reference_festival] + similar.similar_festivals
+    # Profil chiffré ; à défaut, chiffres relus dans le profil rédigé.
+    parsed = profile_numbers(similar.inferred_profile)
     resolved = criteria.model_copy(
         update={
             "target_festivals": festivals,
             "genres": criteria.genres or ([similar.inferred_genre] if similar.inferred_genre else []),
-            "reference_capacity": criteria.reference_capacity or similar.reference_capacity or None,
-            "reference_setting": criteria.reference_setting or _setting_or_none(similar.reference_setting),
-            "reference_nights": criteria.reference_nights or similar.reference_nights or None,
+            "reference_capacity": (
+                criteria.reference_capacity or similar.reference_capacity or parsed.get("capacity") or None
+            ),
+            "reference_setting": (
+                criteria.reference_setting or _setting_or_none(similar.reference_setting) or parsed.get("setting")
+            ),
+            "reference_nights": criteria.reference_nights or similar.reference_nights or parsed.get("nights") or None,
             "reference_artists_per_night": (
-                criteria.reference_artists_per_night or similar.reference_artists_per_night or None
+                criteria.reference_artists_per_night or similar.reference_artists_per_night
+                or parsed.get("artists_per_night") or None
             ),
         }
     )
     if similar.inferred_profile:
         log(f"Profil de référence : {similar.inferred_profile}")
     log(f"Festivals retenus : {', '.join(festivals)}")
+    log(f"Cible de comparabilité : {_target_label(resolved)}")
     return resolved
+
+
+def _target_label(c: FestivalCriteria) -> str:
+    parts = []
+    if c.capacity_min or c.capacity_max:
+        parts.append(f"jauge {c.capacity_min or '?'}–{c.capacity_max or '?'}/jour")
+    elif c.reference_capacity:
+        parts.append(f"jauge ~{c.reference_capacity:,}/jour".replace(",", " "))
+    else:
+        parts.append("jauge inconnue (non évaluée)")
+    setting = ", ".join(c.settings) if c.settings else c.reference_setting
+    if setting:
+        parts.append(f"cadre {setting}")
+    nights = (f"{c.nights_min or '?'}–{c.nights_max or '?'}" if (c.nights_min or c.nights_max)
+              else c.reference_nights)
+    if nights:
+        parts.append(f"{nights} soirs")
+    if c.reference_artists_per_night:
+        parts.append(f"{c.reference_artists_per_night} artistes/soir")
+    return " · ".join(parts)
 
 
 def build_festival_benchmark(
@@ -201,7 +229,7 @@ def build_festival_benchmark(
     if with_prices and festivals:
         _extract_all(client, festivals, settings, log)
         _record(festivals, log)
-    return _combine(festivals, known)
+    return _combine(festivals, known, log)
 
 
 def _extract_all(
@@ -307,11 +335,23 @@ def _record(items: List[PricedItem], log: Callable[[str], None]) -> None:
         log(f"Base de référence : {c['ajouts']} ajout(s), {c['mises_a_jour']} mise(s) à jour.")
 
 
-def _combine(run_items: List[PricedItem], known: List[PricedItem]) -> List[PricedItem]:
-    """Événements du run + événements de la base qui ne font pas doublon
-    (l'identité d'un festival peut changer à l'extraction : édition réalignée)."""
+def _combine(run_items: List[PricedItem], known: List[PricedItem],
+             log: Callable[[str], None] = lambda _m: None) -> List[PricedItem]:
+    """Événements du run + événements de la base qui ne font pas doublon.
+
+    Festivals : une seule entrée par festival, quelle que soit l'édition ou la
+    façon dont son nom est écrit (constaté : Garorock et Cabaret Vert présents
+    deux fois, une édition issue de la base et une du run, donc comptés double
+    dans les statistiques). On garde la meilleure grille, puis l'édition la
+    plus récente, puis la version du run plutôt que celle de la base.
+    """
     seen = {price_cache.cache_key(i) for i in run_items}
     combined = run_items + [k for k in known if price_cache.cache_key(k) not in seen]
+    if combined and isinstance(combined[0], Festival):
+        combined, merged = knowledge.dedupe_festivals(combined)
+        if merged:
+            log(f"{len(merged)} doublon(s) de festival fusionné(s) (autre édition ou autre libellé, "
+                f"meilleure grille conservée) : {', '.join(merged)}.")
     combined.sort(key=_price_priority_key)
     return combined
 

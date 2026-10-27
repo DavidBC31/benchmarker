@@ -138,6 +138,7 @@ def extract_prices(
     # 1) Playwright d'abord (rendu local GRATUIT) pour "playwright" et "auto".
     #    Seule la structuration coûte, et une seule fois.
     last_text: Optional[str] = None  # dernière page lue, pour expliquer un échec
+    texts_read: list[tuple[str, str]] = []  # (source, texte) lus : seconde chance de structuration
     if strategy in ("playwright", "auto"):
         rendered, err, links = _gather_via_playwright(item.source_url, renderer)
         # Domaine inexistant (URL inventée à la découverte, ex. « cabaret-vert.com ») :
@@ -154,6 +155,7 @@ def extract_prices(
             rendered, err, links = _gather_via_playwright(refined, renderer)
         if rendered:
             last_text = rendered
+            texts_read.append(("playwright", rendered))
             result = _structure(client, rendered, settings.structure_model)
             used = "playwright"
         else:
@@ -173,6 +175,7 @@ def extract_prices(
                 text2, err2, _ = _gather_via_playwright(link, renderer)
                 if text2:
                     last_text = text2
+                    texts_read.append(("playwright (lien de réservation)", text2))
                     candidate = _structure(client, text2, settings.structure_model)
                     if _is_better(candidate, result):
                         result, used = candidate, "playwright (lien de réservation)"
@@ -190,6 +193,7 @@ def extract_prices(
         page_text, err = _gather_via_web_fetch(client, item, settings)
         if page_text:
             last_text = page_text
+            texts_read.append(("web_fetch", page_text))
             candidate = _structure(client, page_text, settings.structure_model)
             if _is_better(candidate, result):
                 result, used = candidate, "web_fetch"
@@ -198,6 +202,17 @@ def extract_prices(
             # résultat (insuffisant) — sinon un double échec (playwright +
             # web_fetch) reste invisible dans les notes de l'événement.
             item.notes = _append_note(item.notes, f"web_fetch : {err}")
+
+    # 2 bis) Seconde chance : une page lue contient visiblement des prix, mais
+    # la structuration (modèle économique) n'en a rien tiré — constaté : grille
+    # complète du Cabaret Vert 2027 lue par le web_fetch puis perdue. On
+    # restructure une fois avec le modèle plus solide (coût limité à ces cas).
+    if not _is_sufficient(result) and settings.extraction_model != settings.structure_model:
+        best = max(texts_read, key=lambda st: _price_evidence(st[1]), default=None)
+        if best and _price_evidence(best[1]) >= 2:
+            candidate = _structure(client, best[1], settings.extraction_model)
+            if _is_better(candidate, result):
+                result, used = candidate, f"{best[0]} (structuration renforcée)"
 
     # 3) Application du résultat
     # Échec sans explication du modèle : on note le début de la page lue (mur
@@ -211,7 +226,7 @@ def extract_prices(
 
     item.prices = result.prices
     item.price_confidence = result.price_confidence
-    item.price_phase = normalize_phase(result.phase)
+    item.price_phase = normalize_phase(result.phase) if result.prices else None
     _align_edition(item, result.edition)
     if used:
         item.notes = _append_note(item.notes, f"source prix : {used}")
@@ -368,9 +383,28 @@ def _gather_via_web_fetch(
             model=settings.extraction_model,
             effort=settings.extraction_effort,
         )
-        return (text or None), (None if text else "page vide ou inaccessible")
+        if not text:
+            return None, "page vide ou inaccessible"
+        # Le modèle répond parfois par un message d'échec (« url_not_accessible »,
+        # « je n'ai pas pu… ») : c'est un échec, pas un contenu de page.
+        if _FETCH_FAILURE_RE.search(text) and _price_evidence(text) < 2:
+            return None, f"page inaccessible ({' '.join(text.split())[:90]}…)"
+        return text, None
     except Exception as exc:  # réseau / refus / autre
         return None, str(exc)
+
+
+_FETCH_FAILURE_RE = re.compile(
+    r"url_not_accessible|url_not_allowed|n'ai (?:donc )?pas pu|impossible d'acc[ée]der|pas pu (?:r[ée]cup[ée]rer|charger)"
+    r"|unable to (?:fetch|access)|could not (?:fetch|access)",
+    re.I,
+)
+_PRICE_RE = re.compile(r"\d+(?:[.,]\d{1,2})?\s?(?:€|eur\b|euros?\b)", re.I)
+
+
+def _price_evidence(text: str) -> int:
+    """Nombre de montants en euros dans un texte (indice qu'une grille y figure)."""
+    return len(_PRICE_RE.findall(text or ""))
 
 
 def _gather_via_playwright(
