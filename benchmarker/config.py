@@ -135,6 +135,22 @@ SECONDARY_PRICE_SOURCES_FR = [
     "wegow.com",
 ]
 
+# Agrégateurs / agendas de festivals : fiche descriptive, rarement la grille
+# de pass complète, souvent tronquée ou fermée à l'outil web_fetch (constaté :
+# touslesfestivals.com « url_not_allowed », jds.fr coupé avant les tarifs).
+# Pour un festival, le site officiel est cherché en priorité.
+FESTIVAL_AGGREGATOR_DOMAINS = [
+    "touslesfestivals.com",
+    "jds.fr",
+    "infoconcert.com",
+    "sortiraparis.com",
+    "festivalfinder.eu",
+    "lesfestivals.fr",
+    "francefestivals.com",
+    "evous.fr",
+    "wegow.com",
+]
+
 # Domaines de billetterie connus pour bloquer systématiquement (ou très
 # souvent) l'accès automatisé — aussi bien notre rendu Playwright que l'outil
 # serveur web_fetch (403, pages de détection de trafic, refus explicite).
@@ -299,6 +315,12 @@ EXTRACTION_WORKERS = int(os.environ.get("BENCHMARKER_EXTRACTION_WORKERS", "3"))
 CACHE_DIR = Path(os.environ.get("BENCHMARKER_CACHE_DIR") or (PROJECT_ROOT / "cache" / "prices"))
 PRICE_CACHE_TTL_DAYS = float(os.environ.get("BENCHMARKER_PRICE_CACHE_TTL_DAYS", "7"))
 PRICE_CACHE_FAIL_TTL_HOURS = float(os.environ.get("BENCHMARKER_PRICE_CACHE_FAIL_TTL_HOURS", "24"))
+# Version de la chaîne d'extraction : un ÉCHEC mémorisé par une version
+# antérieure n'est pas rejoué (constaté : des échecs de l'ancien code ressortis
+# « en mémoire » au lieu d'être retentés avec les correctifs). Les grilles
+# trouvées restent valables quelle que soit la version. À incrémenter quand
+# l'extraction s'améliore.
+EXTRACTION_VERSION = 5
 
 # --- Base de référence (mémoire cumulative) ---------------------------------
 # Chaque run y enregistre ses événements tarifés ; les suivants y puisent les
@@ -316,6 +338,10 @@ MIN_PLAUSIBLE_PRICE_EUR = float(os.environ.get("BENCHMARKER_MIN_PLAUSIBLE_PRICE_
 # Score de comparabilité (0-100) sous lequel un événement est « hors profil » :
 # affiché, mais écarté des statistiques et de la préconisation.
 COMPARABILITY_MIN = int(os.environ.get("BENCHMARKER_COMPARABILITY_MIN", "40"))
+# Seuil plus exigeant pour reprendre de la base un événement qui n'est pas
+# parmi les comparables choisis pour CE run (constaté : un festival de 32 000/
+# jour repris à 40/100 pour une cible à ~17 500/jour, seul tarifé du run).
+BASE_COMPARABILITY_MIN = int(os.environ.get("BENCHMARKER_BASE_COMPARABILITY_MIN", "55"))
 
 # Devise de référence pour la normalisation.
 BASE_CURRENCY = "EUR"

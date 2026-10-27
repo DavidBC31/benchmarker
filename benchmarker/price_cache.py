@@ -5,7 +5,9 @@ mêmes recherches et pages, et rend le même résultat (cohérence d'un run à
 l'autre). Clé = identité de l'événement telle que trouvée à la découverte ;
 un fichier JSON par événement (sûr avec l'extraction parallèle). Les grilles
 trouvées sont gardées `PRICE_CACHE_TTL_DAYS` jours, les échecs
-`PRICE_CACHE_FAIL_TTL_HOURS` heures (un blocage peut n'être que passager).
+`PRICE_CACHE_FAIL_TTL_HOURS` heures (un blocage peut n'être que passager) —
+et seulement s'ils viennent de la version courante de l'extraction
+(`EXTRACTION_VERSION`) : un correctif doit pouvoir retenter l'événement.
 """
 
 from __future__ import annotations
@@ -51,6 +53,8 @@ def load(key: str) -> Optional[dict]:
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
         return None
     found = payload["fields"].get("price_confidence") != PriceConfidence.NONE.value
+    if not found and payload.get("version") != config.EXTRACTION_VERSION:
+        return None
     ttl = timedelta(days=config.PRICE_CACHE_TTL_DAYS) if found else timedelta(hours=config.PRICE_CACHE_FAIL_TTL_HOURS)
     return payload if datetime.now(timezone.utc) - saved <= ttl else None
 
@@ -59,6 +63,7 @@ def store(key: str, item: PricedItem) -> None:
     fields = _FIELDS + (_FESTIVAL_FIELDS if isinstance(item, Festival) else ())
     payload = {
         "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "version": config.EXTRACTION_VERSION,
         "fields": item.model_dump(mode="json", include=set(fields)),
     }
     try:

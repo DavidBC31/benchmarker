@@ -97,13 +97,14 @@ def extract_prices(
     `renderer` : instance `PageRenderer` réutilisable (optionnel, pour Playwright).
     """
     settings = settings or config.resolve_settings()
-    strategy = settings.fetch_strategy
     item.priced_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     item.source_url = normalize_url(item.source_url)
 
     # URL absente, visiblement générique (page d'accueil de billetterie) ou sur
     # un site sans prix (streaming, Shazam…) : recherche ciblée de la fiche.
+    refined_once = False  # une recherche ciblée a déjà eu lieu (sauvetage inutile pour un concert)
     if _needs_refine(item.source_url, item):
+        refined_once = True
         refined = _refine_source_url(client, item, settings)
         if refined:
             item.notes = _append_note(item.notes, f"URL affinée : {refined}")
@@ -116,6 +117,16 @@ def extract_prices(
             )
             return item
 
+    # Festival repéré sur un agrégateur (fiche descriptive, souvent tronquée ou
+    # fermée à web_fetch) : le site officiel affiche la grille de pass. Si on
+    # ne le trouve pas, on garde l'agrégateur.
+    if isinstance(item, Festival) and _domain_in(item.source_url, config.FESTIVAL_AGGREGATOR_DOMAINS):
+        refined_once = True
+        official = _refine_source_url(client, item, settings, mode="official")
+        if official:
+            item.notes = _append_note(item.notes, f"site officiel privilégié à l'agrégateur : {official}")
+            item.source_url = official
+
     # Domaine connu pour bloquer l'accès automatisé (cf. HIGH_FRICTION_DOMAINS) :
     # on cherche d'abord une source alternative (agrégateur/presse) plutôt que
     # de perdre du temps sur une URL qui échouera très probablement. Si rien
@@ -124,6 +135,7 @@ def extract_prices(
     # Vérifié après le bloc précédent (et pas en `elif`) pour couvrir aussi le
     # cas d'une URL manquante affinée vers un domaine lui-même à forte friction.
     if item.source_url and _is_high_friction(item.source_url):
+        refined_once = True
         alt = _refine_source_url(client, item, settings, mode="alternate")
         if alt:
             item.notes = _append_note(
@@ -132,87 +144,27 @@ def extract_prices(
             )
             item.source_url = alt
 
-    result: Optional[PriceExtraction] = None
-    used: Optional[str] = None
+    reading = _Reading(client, item, settings, renderer, refined=refined_once)
+    reading.read(item.source_url)
+    if reading.dead_domain:
+        return item
 
-    # 1) Playwright d'abord (rendu local GRATUIT) pour "playwright" et "auto".
-    #    Seule la structuration coûte, et une seule fois.
-    last_text: Optional[str] = None  # dernière page lue, pour expliquer un échec
-    texts_read: list[tuple[str, str]] = []  # (source, texte) lus : seconde chance de structuration
-    if strategy in ("playwright", "auto"):
-        rendered, err, links = _gather_via_playwright(item.source_url, renderer)
-        # Domaine inexistant (URL inventée à la découverte, ex. « cabaret-vert.com ») :
-        # une recherche ciblée plutôt qu'un web_fetch payant sur une adresse morte.
-        if not rendered and _is_dead_domain(err):
-            dead = urlsplit(item.source_url).netloc
-            refined = _refine_source_url(client, item, settings)
-            if not refined or urlsplit(refined).netloc == dead:
-                item.notes = _append_note(item.notes, f"domaine inexistant ({dead}) et aucune autre URL trouvée")
-                item.price_confidence = PriceConfidence.NONE
-                return item
-            item.notes = _append_note(item.notes, f"domaine inexistant ({dead}), URL retrouvée : {refined}")
-            item.source_url = refined
-            rendered, err, links = _gather_via_playwright(refined, renderer)
-        if rendered:
-            last_text = rendered
-            texts_read.append(("playwright", rendered))
-            result = _structure(client, rendered, settings.structure_model)
-            used = "playwright"
-        else:
-            # Notée même en mode "auto" (avant : silencieuse) pour pouvoir
-            # diagnostiquer un souci de rendu sans devoir forcer la stratégie.
-            item.notes = _append_note(item.notes, f"playwright : {err}")
-
-        # Page vitrine (salle, organisateur) sans grille : les prix sont derrière
-        # le lien « Réserver ». On suit le premier lien de réservation exploitable
-        # (un seul, coût maîtrisé : rendu gratuit + une structuration).
-        if not _is_sufficient(result):
-            link = next(
-                (l for l in links if not _is_high_friction(l) and not _is_non_ticketing(l)),
-                None,
-            )
-            if link:
-                text2, err2, _ = _gather_via_playwright(link, renderer)
-                if text2:
-                    last_text = text2
-                    texts_read.append(("playwright (lien de réservation)", text2))
-                    candidate = _structure(client, text2, settings.structure_model)
-                    if _is_better(candidate, result):
-                        result, used = candidate, "playwright (lien de réservation)"
-                        item.notes = _append_note(item.notes, f"lien de réservation suivi : {link}")
-                        item.source_url = link
-                else:
-                    item.notes = _append_note(item.notes, f"lien de réservation {link} : {err2}")
-
-    # 2) web_fetch (LLM, coûteux) : stratégie dédiée, ou fallback "auto"
-    #    UNIQUEMENT si le rendu gratuit n'a pas donné de grille suffisante.
-    need_web_fetch = strategy == "web_fetch" or (
-        strategy == "auto" and not _is_sufficient(result)
-    )
-    if need_web_fetch:
-        page_text, err = _gather_via_web_fetch(client, item, settings)
-        if page_text:
-            last_text = page_text
-            texts_read.append(("web_fetch", page_text))
-            candidate = _structure(client, page_text, settings.structure_model)
-            if _is_better(candidate, result):
-                result, used = candidate, "web_fetch"
-        else:
-            # Note systématiquement, même si Playwright avait déjà produit un
-            # résultat (insuffisant) — sinon un double échec (playwright +
-            # web_fetch) reste invisible dans les notes de l'événement.
-            item.notes = _append_note(item.notes, f"web_fetch : {err}")
-
-    # 2 bis) Seconde chance : une page lue contient visiblement des prix, mais
-    # la structuration (modèle économique) n'en a rien tiré — constaté : grille
-    # complète du Cabaret Vert 2027 lue par le web_fetch puis perdue. On
-    # restructure une fois avec le modèle plus solide (coût limité à ces cas).
-    if not _is_sufficient(result) and settings.extraction_model != settings.structure_model:
-        best = max(texts_read, key=lambda st: _price_evidence(st[1]), default=None)
-        if best and _price_evidence(best[1]) >= 2:
-            candidate = _structure(client, best[1], settings.extraction_model)
-            if _is_better(candidate, result):
-                result, used = candidate, f"{best[0]} (structuration renforcée)"
+    # 2 ter) Sauvetage : toujours rien d'exploitable. Une recherche ciblée d'une
+    # AUTRE page (site officiel, page tarifs dédiée…) ; pour un festival dont les
+    # tarifs de l'édition visée ne sont pas encore publiés, la grille de
+    # l'édition précédente (constaté en octobre : éditions 2027 sans tarifs,
+    # alors que la grille 2026 restait en ligne). Une seule fois.
+    if not _is_sufficient(reading.result) and (isinstance(item, Festival) or not reading.refined):
+        previous = _previous_edition(item, reading.texts)
+        alt = _refine_source_url(client, item, settings, mode="rescue", tried=reading.tried, previous=previous)
+        if alt:
+            what = f"grille de l'édition {previous} recherchée (tarifs {item.edition} pas encore publiés)" if previous \
+                else "autre page recherchée"
+            item.notes = _append_note(item.notes, f"{what} : {alt}")
+            reading.read(alt, rescue=True)
+    result, used, last_text = reading.result, reading.used, reading.last_text
+    if reading.url_used:
+        item.source_url = reading.url_used
 
     # 3) Application du résultat
     # Échec sans explication du modèle : on note le début de la page lue (mur
@@ -233,6 +185,136 @@ def extract_prices(
     if result.notes:
         item.notes = _append_note(item.notes, result.notes)
     return item
+
+
+class _Reading:
+    """Lecture d'une ou plusieurs pages pour un même événement.
+
+    Pour chaque URL : rendu Playwright (gratuit) puis, si la grille manque, le
+    premier lien « Réserver / Billetterie » ; web_fetch (payant) en repli ;
+    seconde chance de structuration avec le modèle plus solide quand une page
+    lue contient visiblement des prix. Garde le meilleur résultat, la page
+    dont il vient et tout ce qui a été lu (pour expliquer un échec).
+    """
+
+    def __init__(self, client, item: PricedItem, settings: "config.RunSettings", renderer, *, refined: bool = False):
+        self.client, self.item, self.settings, self.renderer = client, item, settings, renderer
+        self.result: Optional[PriceExtraction] = None
+        self.used: Optional[str] = None
+        self.url_used: Optional[str] = None
+        self.last_text: Optional[str] = None
+        self.texts: list[tuple[str, str]] = []  # (source, texte)
+        self.tried: list[str] = []
+        self.refined = refined
+        self.dead_domain = False
+        self._reinforced: set[int] = set()
+
+    def _offer(self, text: str, source: str, url: str) -> bool:
+        self.last_text = text
+        self.texts.append((source, text))
+        return self._consider(_structure(self.client, text, self.settings.structure_model), source, url)
+
+    def _consider(self, candidate: Optional[PriceExtraction], source: str, url: str) -> bool:
+        if _is_better(candidate, self.result):
+            self.result, self.used, self.url_used = candidate, source, url
+            return True
+        return False
+
+    def read(self, url: str, *, rescue: bool = False) -> None:
+        item, settings = self.item, self.settings
+        strategy = settings.fetch_strategy
+        tag = " (sauvetage)" if rescue else ""
+        self.tried.append(url)
+        n_texts = len(self.texts)
+
+        # 1) Playwright d'abord (rendu local GRATUIT) pour "playwright" et "auto".
+        if strategy in ("playwright", "auto"):
+            rendered, err, links = _gather_via_playwright(url, self.renderer)
+            # Domaine inexistant (URL inventée à la découverte, ex. « cabaret-vert.com ») :
+            # une recherche ciblée plutôt qu'un web_fetch payant sur une adresse morte.
+            if not rendered and _is_dead_domain(err) and not rescue:
+                dead = urlsplit(url).netloc
+                self.refined = True
+                refined = _refine_source_url(self.client, item, settings)
+                if not refined or urlsplit(refined).netloc == dead:
+                    item.notes = _append_note(item.notes, f"domaine inexistant ({dead}) et aucune autre URL trouvée")
+                    item.price_confidence = PriceConfidence.NONE
+                    self.dead_domain = True
+                    return
+                item.notes = _append_note(item.notes, f"domaine inexistant ({dead}), URL retrouvée : {refined}")
+                url = item.source_url = refined
+                self.tried.append(url)
+                rendered, err, links = _gather_via_playwright(url, self.renderer)
+            if rendered:
+                self._offer(rendered, "playwright" + tag, url)
+            else:
+                item.notes = _append_note(item.notes, f"playwright{tag} : {err}")
+
+            # Page vitrine (salle, organisateur) sans grille : les prix sont derrière
+            # le lien « Réserver ». On suit le premier lien de réservation exploitable
+            # (un seul, coût maîtrisé : rendu gratuit + une structuration).
+            if not _is_sufficient(self.result):
+                link = next(
+                    (l for l in links if not _same_url(l, self.tried)
+                     and not _is_high_friction(l) and not _is_non_ticketing(l)),
+                    None,
+                )
+                if link:
+                    self.tried.append(link)
+                    text2, err2, _ = _gather_via_playwright(link, self.renderer)
+                    if text2:
+                        if self._offer(text2, "playwright (lien de réservation)" + tag, link):
+                            item.notes = _append_note(item.notes, f"lien de réservation suivi : {link}")
+                    else:
+                        item.notes = _append_note(item.notes, f"lien de réservation {link} : {err2}")
+
+        # 2) web_fetch (LLM, coûteux) : stratégie dédiée, ou fallback "auto"
+        #    UNIQUEMENT si le rendu gratuit n'a pas donné de grille suffisante.
+        if strategy == "web_fetch" or (strategy == "auto" and not _is_sufficient(self.result)):
+            page_text, err = _gather_via_web_fetch(self.client, item, settings, url)
+            if page_text:
+                self._offer(page_text, "web_fetch" + tag, url)
+            else:
+                item.notes = _append_note(item.notes, f"web_fetch{tag} : {err}")
+
+        # 2 bis) Seconde chance : une page lue contient visiblement des prix, mais
+        # la structuration (modèle économique) n'en a rien tiré — constaté : grille
+        # complète du Cabaret Vert 2027 lue par le web_fetch puis perdue. On
+        # restructure une fois avec le modèle plus solide (coût limité à ces cas).
+        if not _is_sufficient(self.result) and settings.extraction_model != settings.structure_model:
+            fresh = [(i, st) for i, st in enumerate(self.texts) if i >= n_texts and i not in self._reinforced]
+            best = max(fresh, key=lambda ist: _price_evidence(ist[1][1]), default=None)
+            if best and _price_evidence(best[1][1]) >= 2:
+                self._reinforced.add(best[0])
+                source, text = best[1]
+                self._consider(_structure(self.client, text, settings.extraction_model),
+                               f"{source} (structuration renforcée)", self.url_used or url)
+
+
+def _same_url(url: str, seen: list[str]) -> bool:
+    key = lambda u: (u or "").split("#")[0].rstrip("/").lower()
+    return key(url) in {key(u) for u in seen}
+
+
+_UNPUBLISHED_RE = re.compile(
+    r"pas encore (?:été )?(?:publi|annonc|communiqu|disponib|en vente|ouverte?)"
+    r"|bient[ôo]t (?:disponible|en vente)|(?:tarifs?|billetterie|prix) (?:à venir|prochainement)"
+    r"|not (?:yet )?(?:on sale|available|announced)|coming soon",
+    re.I,
+)
+
+
+def _previous_edition(item: PricedItem, texts: list[tuple[str, str]]) -> Optional[str]:
+    """Édition précédente à viser quand les pages lues disent que les tarifs de
+    l'édition visée ne sont pas encore publiés (et qu'elle n'est pas trop
+    ancienne : on ne descend jamais sous l'année dernière)."""
+    if not isinstance(item, Festival):
+        return None
+    m = re.search(r"(?:19|20)\d{2}", item.edition or "")
+    if not m or not any(_UNPUBLISHED_RE.search(t) for _, t in texts):
+        return None
+    previous = int(m.group(0)) - 1
+    return str(previous) if previous >= datetime.now(timezone.utc).year - 1 else None
 
 
 def _align_edition(item: PricedItem, priced_edition: str) -> None:
@@ -314,30 +396,50 @@ def _refine_source_url(
     settings: "config.RunSettings",
     *,
     mode: str = "direct",
+    tried: Optional[list[str]] = None,
+    previous: Optional[str] = None,
 ) -> Optional[str]:
     """Recherche ciblée d'une URL de billetterie (un seul appel, peu coûteux).
 
     `mode="direct"` : cas URL manquante/générique, cherche la fiche directe.
     `mode="alternate"` : cas domaine à forte friction anti-bot, cherche une
     source de repli (agrégateur/presse) plutôt qu'un doublon du même domaine.
+    `mode="official"` : festival trouvé sur un agrégateur, cherche son site officiel.
+    `mode="rescue"` : les pages `tried` n'ont rien donné, cherche une autre page —
+    celle de l'édition `previous` si les tarifs de l'édition visée ne sont pas publiés.
     """
-    is_alternate = mode == "alternate"
-    query = (
-        ("Trouve une source alternative pour le prix des billets de cet événement précis "
-         f"(la billetterie {urlsplit(item.source_url).netloc if item.source_url else '?'} "
-         "bloque l'accès automatisé) :\n"
-         if is_alternate else
-         "Trouve l'URL directe de vente de billets pour cet événement précis :\n")
-        + item.search_label()
-        + ("\nSi cette édition est passée, la page billetterie / tarifs de l'édition en cours ou à venir "
-           "convient (les prix seront rattachés à la bonne édition)." if isinstance(item, Festival) else "")
-    )
+    is_fest = isinstance(item, Festival)
+    tried = tried or []
+    if mode == "alternate":
+        query = ("Trouve une source alternative pour le prix des billets de cet événement précis "
+                 f"(la billetterie {urlsplit(item.source_url).netloc if item.source_url else '?'} "
+                 "bloque l'accès automatisé) :\n")
+    elif mode == "official":
+        query = ("Trouve la page billetterie / tarifs du SITE OFFICIEL de ce festival (pas un agrégateur ni "
+                 f"un agenda comme {', '.join(config.FESTIVAL_AGGREGATOR_DOMAINS[:4])}) :\n")
+    elif mode == "rescue":
+        query = ("Les pages suivantes n'ont pas donné de grille tarifaire exploitable (illisibles, tronquées "
+                 f"ou sans prix) : {', '.join(tried) or '?'}.\n"
+                 "Trouve une AUTRE page affichant les prix de cet événement"
+                 + (" (page billetterie / tarifs du site officiel de préférence, sinon presse ou agrégateur "
+                    "annonçant les prix des pass)" if is_fest else "") + " :\n")
+    else:
+        query = "Trouve l'URL directe de vente de billets pour cet événement précis :\n"
+    query += item.search_label()
+    if is_fest and previous:
+        query += (f"\nLes tarifs de l'édition {item.edition} ne sont pas encore publiés : cherche la page qui "
+                  f"affiche les prix des pass de l'édition {previous} (billetterie officielle encore en ligne, "
+                  f"page tarifs, article de presse ou agrégateur annonçant les tarifs {previous}).")
+    elif is_fest:
+        query += ("\nSi cette édition est passée, la page billetterie / tarifs de l'édition en cours ou à venir "
+                  "convient ; si ses tarifs ne sont pas encore publiés, une page affichant ceux de l'édition "
+                  "précédente convient (les prix seront rattachés à la bonne édition).")
     web_search = dict(config.WEB_SEARCH_TOOL)
     web_search["max_uses"] = config.URL_REFINE_MAX_USES
     try:
         text = run_server_tool_loop(
             client,
-            system=_REFINE_ALTERNATE_SYSTEM if is_alternate else _REFINE_URL_SYSTEM,
+            system=_REFINE_ALTERNATE_SYSTEM if mode in ("alternate", "rescue") else _REFINE_URL_SYSTEM,
             user=query,
             tools=[web_search],
             model=settings.discovery_model,
@@ -357,17 +459,21 @@ def _refine_source_url(
     if not match:
         return None
     url = normalize_url(match.group(0).rstrip(".,)\"'"))
-    return None if _needs_refine(url, item) else url
+    if _needs_refine(url, item) or _same_url(url, tried):
+        return None
+    if mode == "official" and _domain_in(url, config.FESTIVAL_AGGREGATOR_DOMAINS):
+        return None
+    return url
 
 
 # --- collecte de la page ----------------------------------------------------
 def _gather_via_web_fetch(
-    client: anthropic.Anthropic, item: PricedItem, settings: "config.RunSettings"
+    client: anthropic.Anthropic, item: PricedItem, settings: "config.RunSettings", url: Optional[str] = None
 ) -> tuple[Optional[str], Optional[str]]:
     """Récupère la page via l'outil serveur web_fetch. Renvoie (texte, erreur)."""
     user = (
         f"Voici la page billetterie pour : {item.search_label()}\n"
-        f"URL : {item.source_url}\n\n"
+        f"URL : {url or item.source_url}\n\n"
         "Récupère la page et donne-moi la grille tarifaire complète par catégorie "
         "(ou par type de pass pour un festival)."
     )
@@ -394,9 +500,15 @@ def _gather_via_web_fetch(
         return None, str(exc)
 
 
+# Réponses du modèle qui décrivent un échec ou un travail inachevé plutôt
+# qu'un contenu de page (constaté : « Il y a un lien billetterie séparé. Je
+# vais le récupérer… » pris pour la page de Rio Loco ; page jds.fr « tronquée
+# avant la section tarifaire »).
 _FETCH_FAILURE_RE = re.compile(
     r"url_not_accessible|url_not_allowed|n'ai (?:donc )?pas pu|impossible d'acc[ée]der|pas pu (?:r[ée]cup[ée]rer|charger)"
-    r"|unable to (?:fetch|access)|could not (?:fetch|access)",
+    r"|n'est pas autoris[ée]|ne contient (?:pas|aucun) (?:de )?(?:contenu|grille|information|prix)"
+    r"|s'arr[êe]te avant|tronqu[ée]|je vais (?:le |la |les |maintenant |donc )?(?:r[ée]cup[ée]rer|consulter|chercher|essayer|v[ée]rifier)"
+    r"|v[ée]rifions|unable to (?:fetch|access)|could not (?:fetch|access)",
     re.I,
 )
 _PRICE_RE = re.compile(r"\d+(?:[.,]\d{1,2})?\s?(?:€|eur\b|euros?\b)", re.I)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import date as _date
 from enum import Enum
 from typing import List, Optional, Union
 
@@ -488,11 +489,14 @@ def discovered_to_festival(d: DiscoveredFestival) -> Festival:
         return v if v and v > 0 else None
 
     headliners = [h.strip() for h in re.split(r"[,;/]", d.headliners) if h.strip()]
+    start, end = text(d.date_start), text(d.date_end)
+    if _implausible_span(start, end, num(d.nb_nights)):
+        start = end = None
     return Festival(
         name=d.name,
         edition=text(d.edition),
-        date_start=text(d.date_start),
-        date_end=text(d.date_end),
+        date_start=start,
+        date_end=end,
         city=text(d.city),
         region=text(d.region),
         country=text(d.country),
@@ -508,6 +512,17 @@ def discovered_to_festival(d: DiscoveredFestival) -> Festival:
             if est and getattr(d, f)
         ],
     )
+
+
+def _implausible_span(start: Optional[str], end: Optional[str], nights: Optional[int]) -> bool:
+    """Dates qui couvrent un mois entier pour un festival de quelques soirs :
+    mois seul connu, converti en 1er → 31 (constaté : « 2026-06-01 → 2026-07-31 »
+    pour 3 soirs). Mieux vaut pas de dates que des dates fausses."""
+    try:
+        span = (_date.fromisoformat(end) - _date.fromisoformat(start)).days
+    except (TypeError, ValueError):
+        return False
+    return span > max(20, 3 * (nights or 0))
 
 
 _FESTIVAL_NAME_STOPWORDS = {"festival", "fest", "de", "du", "des", "la", "le", "les", "l", "d", "et", "en", "the"}

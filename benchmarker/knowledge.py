@@ -300,7 +300,9 @@ def matching_events(
         return any(t and (t == name or t in name or name in t) for t in targets)
 
     def in_profile(i: PricedItem) -> bool:
-        return i.comparability is not None and i.comparability >= config.COMPARABILITY_MIN
+        # Hors cibles, l'événement n'a pas été choisi pour ce run : on exige un
+        # profil nettement plus proche que le simple seuil des statistiques.
+        return i.comparability is not None and i.comparability >= config.BASE_COMPARABILITY_MIN
 
     chosen = [i for i in pool if is_target(i) or in_profile(i)]
     chosen.sort(key=lambda i: -(i.comparability or 0))

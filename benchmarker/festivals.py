@@ -148,7 +148,8 @@ RÈGLE CRITIQUE si ton budget de recherche s'épuise ou qu'un appel est refusé 
 
 _DISCOVERY_INSTRUCTION = """À partir des résultats de recherche ci-dessous, produis la liste
 structurée des festivals trouvés. Pour chacun, renseigne au maximum : nom, édition (année),
-dates de début et de fin (ISO), commune, région, pays, cadre (urbain / periurbain / rural),
+dates de début et de fin (ISO ; vides si seul le mois est connu — ne pas
+compléter par le 1er et le dernier jour du mois), commune, région, pays, cadre (urbain / periurbain / rural),
 jauge journalière, programmation dominante, têtes d'affiche (séparées par des virgules),
 nombre de soirs, artistes par soir, et l'URL de billetterie ou de la page tarifs si elle
 apparaît (laisse vide sinon — ne pas la deviner). Champ inconnu : chaîne vide ou 0.

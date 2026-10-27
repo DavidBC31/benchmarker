@@ -241,6 +241,7 @@ Réglable par variables d'environnement (voir `benchmarker/config.py`) :
 | `BENCHMARKER_PRICE_CACHE_FAIL_TTL_HOURS` | `24` | Durée de mémoire d'un échec (heures) |
 | `BENCHMARKER_MIN_PLAUSIBLE_PRICE_EUR` | `5` | Prix plein tarif sous lequel un prix est jugé aberrant |
 | `BENCHMARKER_COMPARABILITY_MIN` | `40` | Score sous lequel un événement est hors profil |
+| `BENCHMARKER_BASE_COMPARABILITY_MIN` | `55` | Score minimal pour reprendre de la base un événement qui n'est pas parmi les comparables du run |
 | `BENCHMARKER_BASE_PATH` | `data/reference.sqlite` | Base de référence (mémoire cumulative) |
 | `BENCHMARKER_BASE_MAX_AGE_DAYS` | `365` | Âge maximal d'une grille en base pour être reprise dans un run |
 

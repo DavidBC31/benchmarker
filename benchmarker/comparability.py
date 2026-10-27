@@ -21,7 +21,7 @@ from typing import Iterable, List, Optional
 
 from .models import Concert, Festival, FestivalCriteria, SearchCriteria, Setting, coerce_setting
 
-_CAPACITY_TOLERANCE = 2.5  # score nul à 2,5× hors de la cible
+_CAPACITY_TOLERANCE = 2.0  # score nul à 2× hors de la fourchette (2,5× une cible ponctuelle)
 _APN_TOLERANCE = 2.0
 _POINT_MARGIN = 1.25  # une cible ponctuelle accepte ±25 % sans pénalité
 
@@ -31,7 +31,7 @@ _POINT_MARGIN = 1.25  # une cible ponctuelle accepte ±25 % sans pénalité
 # comparable à une cible de 12 000/jour parce que son cadre et sa
 # programmation correspondent. Les autres critères sont moyennés (pondérés).
 _GATE = "jauge"
-_GATE_FLOOR = 0.25  # multiplicateur minimal quand la jauge est totalement hors cible
+_GATE_FLOOR = 0.10  # multiplicateur minimal quand la jauge est totalement hors cible
 _FESTIVAL_WEIGHTS = {"jauge": 0.0, "cadre": 0.30, "programmation": 0.30, "soirs": 0.20, "artistes/soir": 0.20}
 _CONCERT_WEIGHTS = {"jauge": 0.0, "style": 1.0}
 
@@ -129,6 +129,12 @@ def _combine(parts: dict, weights: dict, labels: dict) -> tuple[Optional[int], O
 def score_festivals(festivals: List[Festival], criteria: FestivalCriteria) -> None:
     """Renseigne `comparability` / `comparability_detail` sur chaque festival."""
     ref = _find_reference(festivals, criteria.reference_festival, lambda f: f.name)
+    # Référence trouvée sans jauge alors que son profil a été chiffré : on la
+    # reprend (estimée) plutôt que de la comparer sans son critère principal.
+    if ref and not ref.capacity and criteria.reference_capacity:
+        ref.capacity = criteria.reference_capacity
+        if "capacity" not in ref.estimated_fields:
+            ref.estimated_fields.append("capacity")
 
     cap_lo, cap_hi = criteria.capacity_min, criteria.capacity_max
     if cap_lo is None and cap_hi is None:
